@@ -1,0 +1,36 @@
+rules:
+  - id: appgate-high-requests
+    alert: HighRequestRate
+    expr: rate(appgate_requests_total[5m]) > 1000
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High request rate on AppGate gateway"
+
+  - id: appgate-auth-failures
+    alert: HighAuthFailureRate
+    expr: rate(appgate_auth_failures_total[5m]) > 10
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High authentication failure rate"
+
+  - id: appgate-authorization-denials
+    alert: HighAuthorizationDenialRate
+    expr: rate(appgate_authorization_denials_total[5m]) > 5
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High authorization denial rate"
+
+  - id: appgate-upstream-errors
+    alert: UpstreamErrors
+    expr: rate(appgate_upstream_errors_total[5m]) > 10
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High upstream error rate"

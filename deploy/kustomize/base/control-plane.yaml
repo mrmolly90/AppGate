@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+  labels:
+    app: appgate-control-plane
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: appgate-control-plane
+  template:
+    metadata:
+      labels:
+        app: appgate-control-plane
+    spec:
+      serviceAccountName: appgate-control-plane
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control-plane
+          image: appgate/control-plane:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8443
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8443"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-database
+                  key: url
+            - name: JWT_ISSUER
+              value: "appgate-control-plane"
+            - name: JWT_AUDIENCE
+              value: "appgate-gateway"
+            - name: SIGNING_KEY_PATH
+              value: "/etc/appgate/keys/signing.pem"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8443
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: signing-key
+              mountPath: /etc/appgate/keys
+              readOnly: true
+      volumes:
+        - name: signing-key
+          secret:
+            secretName: appgate-signing-key
+            items:
+              - key: signing.pem
+                path: signing.pem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+  labels:
+    app: appgate-control-plane
+spec:
+  selector:
+    app: appgate-control-plane
+  ports:
+    - name: api
+      port: 8443
+      targetPort: 8443
+      protocol: TCP

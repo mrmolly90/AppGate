@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appgate-gateway
+  namespace: appgate-gateway
+  labels:
+    app: appgate-gateway
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: appgate-gateway
+  template:
+    metadata:
+      labels:
+        app: appgate-gateway
+    spec:
+      serviceAccountName: appgate-gateway
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: appgate/gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8443
+              protocol: TCP
+          env:
+            - name: LISTEN_PORT
+              value: "8443"
+            - name: CONTROL_PLANE_URL
+              value: "https://appgate-control-plane:8443"
+            - name: JWT_KEY_PATH
+              value: "/etc/appgate/keys/verifying.pem"
+            - name: JWT_ISSUER
+              value: "appgate-control-plane"
+            - name: JWT_AUDIENCE
+              value: "appgate-gateway"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "128Mi"
+            limits:
+              cpu: "2"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8443
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: verifying-key
+              mountPath: /etc/appgate/keys
+              readOnly: true
+      volumes:
+        - name: verifying-key
+          secret:
+            secretName: appgate-verifying-key
+            items:
+              - key: verifying.pem
+                path: verifying.pem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: appgate-gateway
+  namespace: appgate-gateway
+  labels:
+    app: appgate-gateway
+spec:
+  selector:
+    app: appgate-gateway
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443
+      protocol: TCP
+  type: LoadBalancer

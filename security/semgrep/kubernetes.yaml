@@ -1,0 +1,25 @@
+rules:
+  - id: no-hardcoded-credentials
+    pattern: '(?i)(password|secret|api_key|apiKey|secret_key|secretKey)\s*[:=]\s*["'"'"'][^"'"'"']+["'"'"']'
+    message: "Hardcoded credentials detected. Use environment variables or secrets manager."
+    severity: ERROR
+
+  - id: no-default-namespace
+    pattern: 'namespace: default'
+    message: "Do not use the default namespace. Create an explicit namespace."
+    severity: WARNING
+
+  - id: no-privileged-containers
+    pattern: 'privileged: true'
+    message: "Privileged containers are not allowed. Use securityContext with least privilege."
+    severity: ERROR
+
+  - id: no-host-network
+    pattern: 'hostNetwork: true'
+    message: "hostNetwork is not allowed without documented security review."
+    severity: ERROR
+
+  - id: no-wide-open-egress
+    pattern: '0\.0\.0\.0/0'
+    message: "0.0.0.0/0 egress is not allowed without documented security review."
+    severity: WARNING

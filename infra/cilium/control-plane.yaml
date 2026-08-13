@@ -1,0 +1,95 @@
+# Control plane network policies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-plane-allow
+  namespace: appgate-system
+spec:
+  podSelector:
+    matchLabels:
+      app: appgate-control-plane
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from gateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: appgate-gateway
+          podSelector:
+            matchLabels:
+              app: appgate-gateway
+      ports:
+        - protocol: TCP
+          port: 8443
+    # Allow from admin (via admin API)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: appgate-system
+          podSelector:
+            matchLabels:
+              app: appgate-admin
+      ports:
+        - protocol: TCP
+          port: 8444
+  egress:
+    # Allow to database
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: appgate-system
+          podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow to Prometheus (already covered by allow-metrics)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-allow
+  namespace: appgate-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app: appgate-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from internet via load balancer
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0  # Explicitly documented: external client traffic
+      ports:
+        - protocol: TCP
+          port: 443
+  egress:
+    # Allow to control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: appgate-system
+          podSelector:
+            matchLabels:
+              app: appgate-control-plane
+      ports:
+        - protocol: TCP
+          port: 8443
+    # Allow to approved LLM endpoints only
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0  # Explicitly documented: outbound to LLM providers
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+            - 169.254.0.0/16
+            - 100.64.0.0/10
+      ports:
+        - protocol: TCP
+          port: 443

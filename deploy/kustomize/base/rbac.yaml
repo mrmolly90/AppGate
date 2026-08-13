@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/appgate-control-plane
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appgate-gateway
+  namespace: appgate-gateway
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/appgate-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+subjects:
+  - kind: ServiceAccount
+    name: appgate-control-plane
+    namespace: appgate-system
+roleRef:
+  kind: Role
+  name: appgate-control-plane
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,16 @@
+name: appgate
+version: 0.1.0
+description: AppGate Enterprise LLM Security Gateway
+
+apiVersion: v2
+type: application
+
+dependencies:
+  - name: prometheus
+    version: "~25.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: prometheus.enabled
+  - name: grafana
+    version: "~7.0"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: grafana.enabled

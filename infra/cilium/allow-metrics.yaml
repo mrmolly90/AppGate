@@ -1,0 +1,46 @@
+# Allow metrics scraping from Prometheus
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics
+  namespace: appgate-system
+spec:
+  podSelector:
+    matchLabels:
+      app: appgate-control-plane
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: appgate-observability
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics
+  namespace: appgate-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app: appgate-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: appgate-observability
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090

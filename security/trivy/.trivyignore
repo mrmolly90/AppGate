@@ -1,0 +1,7 @@
+# .trivyignore
+# Ignore specific CVEs with justification
+# CVE-2024-XXXXX - Not applicable to AppGate architecture
+
+# Ignore specific files
+**/*.tf
+**/*.md

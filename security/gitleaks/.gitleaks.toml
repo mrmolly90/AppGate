@@ -1,0 +1,11 @@
+# .gitleaks.toml
+title = "AppGate Gitleaks Configuration"
+
+[allowlist]
+description = "Allow known good patterns"
+
+[[rules]]
+id = "appgate-no-credentials"
+description = "No credentials in repository"
+regex = '''(?i)(?:password|secret|key|token|credential).*=(?:'|")(?!<placeholder>)(.*)'''
+tags = ["security", "credentials"]

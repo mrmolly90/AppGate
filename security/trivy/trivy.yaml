@@ -18,9 +18,6 @@ skip-dirs:
 
 timeout: 10m
 
-db:
-  no-progress: true
-
 # Ignore unfixed CVEs in base images
 # Format: CVE-ID # TICKET-ID: reason
 ignore-unfixed: true

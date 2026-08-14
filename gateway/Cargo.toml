@@ -14,9 +14,9 @@ jsonwebtoken = "9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = "0.28"
-opentelemetry = { version = "0.27", features = ["metrics", "trace"] }
-opentelemetry-sdk = { version = "0.27", features = ["rt-tokio", "metrics"] }
-opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+opentelemetry = { version = "0.28", features = ["metrics", "trace"] }
+opentelemetry-sdk = { version = "0.28", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp = { version = "0.28", features = ["grpc-tonic"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 thiserror = "2"
 anyhow = "1"

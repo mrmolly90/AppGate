@@ -7,12 +7,12 @@ metadata:
     app.kubernetes.io/name: appgate-gateway
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  replicas: {{ .Values.gateway.replicas }}
+  replicas: {{ .Values.gateway.replicas | default 3 }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+      maxUnavailable: {{ .Values.gateway.strategy.maxUnavailable | default 0 }}
+      maxSurge: {{ .Values.gateway.strategy.maxSurge | default 1 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: appgate-gateway
@@ -29,12 +29,7 @@ spec:
     spec:
       serviceAccountName: {{ include "appgate.fullname" . }}-gateway
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml .Values.gateway.podSecurityContext | default (dict "runAsNonRoot" true "runAsUser" 65534 "runAsGroup" 65534 "fsGroup" 65534 "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 8 }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -46,6 +41,8 @@ spec:
         - name: gateway
           image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
           imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.gateway.securityContext | default (dict "runAsNonRoot" true "runAsUser" 65534 "runAsGroup" 65534 "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 12 }}
           args:
             - --listen-addr=0.0.0.0
             - --listen-port={{ .Values.gateway.port }}

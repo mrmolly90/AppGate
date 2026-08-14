@@ -1,29 +1,39 @@
-# AppGate Rust Gateway — Multi-stage, musl static, distroless, multi-arch
+# AppGate Rust Gateway — Multi-stage, musl static, cross-compiled, distroless, multi-arch
+# Uses cross-compilation (NOT QEMU emulation) for speed
 # syntax=docker/dockerfile:1
 
-# Stage 1: Build musl static binary
-FROM --platform=$BUILDPLATFORM rust:1.78-alpine AS builder
+# Stage 1: Cross-compile musl static binary
+FROM --platform=$BUILDPLATFORM rust:1.80-alpine AS builder
 
-RUN apk add --no-cache musl-dev git
+RUN apk add --no-cache musl-dev git clang lld
 
 ARG TARGETPLATFORM
-RUN echo "$TARGETPLATFORM" | sed 's|linux/amd64|x86_64-unknown-linux-musl|; s|linux/arm64|aarch64-unknown-linux-musl|' > /target.txt && \
-    cat /target.txt
+ARG BUILDPLATFORM
+
+# Map TARGETPLATFORM to Rust target triple
+RUN echo "$TARGETPLATFORM" | sed 's|linux/amd64|x86_64-unknown-linux-musl|; s|linux/arm64|aarch64-unknown-linux-musl|' > /target.txt
+RUN cat /target.txt
+
+# Install cross-compilation linker based on target
+RUN case "$TARGETPLATFORM" in \
+    linux/amd64) apk add --no-cache musl-dev ;; \
+    linux/arm64) apk add --no-cache aarch64-none-elf-binutils ;; \
+    esac
 
 WORKDIR /app
-COPY Cargo.toml ./
-RUN if [ -f Cargo.lock ]; then cp Cargo.lock Cargo.lock.bak; fi && \
-    cargo generate-lockfile 2>/dev/null || true && \
-    mkdir src && echo "fn main() {}" > src/main.rs && \
-    cargo build --release --target $(cat /target.txt) 2>/dev/null || true
+
+# Cache dependencies first (layer caching)
+COPY Cargo.toml Cargo.lock* ./
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs && \
+    cargo build --release --target "$(cat /target.txt)" 2>/dev/null || true
 RUN rm -rf src
-COPY Cargo.lock* ./
 
+# Full build
 COPY . .
-RUN cargo build --release --target $(cat /target.txt) 2>&1 && \
-    cp target/$(cat /target.txt)/release/appgate-gateway /appgate-gateway
+RUN cargo build --release --target "$(cat /target.txt)" && \
+    cp "target/$(cat /target.txt)/release/appgate-gateway" /appgate-gateway
 
-# Stage 2: Distroless non-root
+# Stage 2: Minimal distroless image
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
@@ -33,6 +43,6 @@ USER 65534:65534
 EXPOSE 8443
 
 LABEL org.opencontainers.image.source=https://github.com/mrmolly90/AppGate
-LABEL org.opencontainers.image.description="AppGate Rust Gateway"
+LABEL org.opencontainers.image.description="AppGate Rust Gateway — Zero Trust SDP Gateway"
 
 ENTRYPOINT ["/appgate-gateway"]

@@ -1,63 +1,112 @@
-.PHONY: all build test lint clean fmt vet security tf
+.PHONY: all build test lint clean fmt vet security tf docker help
 
-all: build test lint
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-# Control Plane
-build-control-plane:
-	cd control-plane && go build -o bin/appgate ./cmd/appgate
+# ── Control Plane (Go) ────────────────────────────────────────────
+go-build: ## Build Go control plane binary
+	cd control-plane && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$(shell git describe --tags --always --dirty) -X main.Commit=$(shell git rev-parse --short HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o bin/appgate ./cmd/appgate
 
-test-control-plane:
-	cd control-plane && go test ./... -race -count=1
+go-test: ## Run Go unit tests
+	cd control-plane && go test ./... -race -shuffle=on -count=1 -timeout=60s -tags=unit
 
-vet-control-plane:
+go-test-integration: ## Run Go integration tests
+	cd control-plane && go test ./... -race -count=1 -timeout=300s -tags=integration
+
+go-lint: ## Run Go linters
+	cd control-plane && golangci-lint run --timeout=5m --out-format=colored-line-number
+
+go-vet: ## Run Go vet
 	cd control-plane && go vet ./...
 
-lint-control-plane:
-	cd control-plane && golangci-lint run
+go-mod: ## Tidy and verify Go modules
+	cd control-plane && go mod tidy && go mod verify
 
-# Gateway
-build-gateway:
-	cd gateway && cargo build --release
+go-all: go-mod go-vet go-lint go-test go-build ## Run all Go checks
 
-test-gateway:
-	cd gateway && cargo test
+# ── Gateway (Rust) ────────────────────────────────────────────────
+rust-check: ## Run Rust fmt, clippy, and test
+	cd gateway && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test
 
-clippy-gateway:
+rust-build: ## Build Rust gateway binary (musl, release)
+	cd gateway && cargo build --release --target x86_64-unknown-linux-musl --locked
+
+rust-test: ## Run Rust tests
+	cd gateway && cargo test --locked
+
+rust-fmt: ## Format Rust code
+	cd gateway && cargo fmt
+
+rust-clippy: ## Run Rust clippy
 	cd gateway && cargo clippy --all-targets --all-features -- -D warnings
 
-audit-gateway:
+rust-audit: ## Audit Rust dependencies for vulnerabilities
 	cd gateway && cargo audit
 
-# Infrastructure
-tf-init:
-	cd infra/terraform/environments/dev && terraform init && terraform validate
+rust-all: rust-fmt rust-clippy rust-test rust-audit rust-build ## Run all Rust checks
 
-tf-plan:
-	cd infra/terraform/environments/dev && terraform plan
+# ── Docker ────────────────────────────────────────────────────────
+docker-control-plane: ## Build control-plane Docker image
+	docker buildx build --platform=linux/amd64,linux/arm64 \
+		--cache-from type=gha,scope=control-plane \
+		--cache-to type=gha,mode=max,scope=control-plane \
+		-t ghcr.io/mrmolly90/appgate-control-plane:latest \
+		-f control-plane/Dockerfile control-plane
 
-tf-apply:
-	cd infra/terraform/environments/dev && terraform apply
+docker-gateway: ## Build gateway Docker image
+	docker buildx build --platform=linux/amd64,linux/arm64 \
+		--cache-from type=gha,scope=gateway \
+		--cache-to type=gha,mode=max,scope=gateway \
+		-t ghcr.io/mrmolly90/appgate-gateway:latest \
+		-f gateway/Dockerfile gateway
 
-tf-security:
-	cd infra/terraform && tflint && checkov -d . && tfsec .
+docker-all: docker-control-plane docker-gateway ## Build all Docker images
 
-# Security
-security-scan:
-	trivy fs --severity HIGH,CRITICAL .
-	gitleaks detect --source .
+# ── Terraform ─────────────────────────────────────────────────────
+tf-init: ## Initialize Terraform for all environments
+	cd infra/terraform/environments/dev && terraform init -backend=false -input=false
+	cd infra/terraform/environments/staging && terraform init -backend=false -input=false
+	cd infra/terraform/environments/production && terraform init -backend=false -input=false
+
+tf-validate: ## Validate Terraform for all environments
+	cd infra/terraform/environments/dev && terraform validate -no-color
+	cd infra/terraform/environments/staging && terraform validate -no-color
+	cd infra/terraform/environments/production && terraform validate -no-color
+
+tf-fmt: ## Format Terraform code
+	terraform fmt -recursive infra/terraform/
+
+tf-plan: ## Plan Terraform for dev
+	cd infra/terraform/environments/dev && terraform plan -no-color
+
+tf-all: tf-fmt tf-init tf-validate ## Run all Terraform checks
+
+# ── Helm ──────────────────────────────────────────────────────────
+helm-lint: ## Lint Helm chart
+	helm lint deploy/helm/appgate --strict
+
+helm-template: ## Render Helm templates
+	helm template appgate deploy/helm/appgate --debug > /dev/null
+
+helm-all: helm-lint helm-template ## Run all Helm checks
+
+# ── Security ──────────────────────────────────────────────────────
+trivy-fs: ## Scan filesystem with Trivy
+	trivy fs --config security/trivy/trivy.yaml --ignorefile security/trivy/trivyignore .
+
+gitleaks: ## Scan for secrets with Gitleaks
+	gitleaks detect --source . --verbose
+
+semgrep: ## Run Semgrep
 	semgrep --config=auto --error .
 
-# Observability
-otel-collector:
-	docker run --rm -v $(PWD)/observability/otel/otel-config.yaml:/etc/otel/config.yaml \
-		-p 4317:4317 -p 4318:4318 otel/opentelemetry-collector-contrib:latest
+security-all: trivy-fs gitleaks semgrep ## Run all security scans
 
-# All
-build: build-control-plane build-gateway
-test: test-control-plane test-gateway
-lint: lint-control-plane clippy-gateway
-fmt:
-	cd control-plane && go fmt ./...
-	cd gateway && cargo fmt --check
-vet: vet-control-plane
-security: security-scan audit-gateway tf-security
+# ── All ───────────────────────────────────────────────────────────
+build: go-build rust-build ## Build all binaries
+test: go-test rust-test ## Run all tests
+lint: go-lint rust-clippy ## Run all linters
+fmt: go-vet rust-fmt ## Format all code
+security: security-all ## Run all security scans
+ci: go-all rust-all helm-all tf-all ## Run full CI (no Docker — use CI runner)
+all: build test lint security ## Build, test, lint, scan

@@ -3,7 +3,7 @@
 
 # ── Global ────────────────────────────────────────────────────────
 global:
-  environment: production
+  environment: "production"
 
 # ── Flagger (optional) ────────────────────────────────────────────
 flagger:
@@ -11,6 +11,7 @@ flagger:
 
 # ── Control Plane ─────────────────────────────────────────────────
 controlPlane:
+  name: appgate-control-plane
   port: 8443
   replicas: 3
   logLevel: info
@@ -21,8 +22,20 @@ controlPlane:
 
   image:
     repository: ghcr.io/mrmolly90/appgate-control-plane
-    tag: latest
+    tag: "latest"
     pullPolicy: IfNotPresent
+    digest: ""
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
 
   resources:
     requests:
@@ -33,13 +46,33 @@ controlPlane:
       memory: 512Mi
 
   autoscaling:
+    enabled: true
     minReplicas: 3
     maxReplicas: 10
     targetCPU: 70
     targetMemory: 80
 
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  service:
+    type: ClusterIP
+    port: 8443
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: control-plane.appgate.local
+        paths:
+          - path: /
+            pathType: Prefix
+
 # ── Gateway ───────────────────────────────────────────────────────
 gateway:
+  name: appgate-gateway
   port: 8443
   servicePort: 443
   serviceType: LoadBalancer
@@ -50,8 +83,20 @@ gateway:
 
   image:
     repository: ghcr.io/mrmolly90/appgate-gateway
-    tag: latest
+    tag: "latest"
     pullPolicy: IfNotPresent
+    digest: ""
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
 
   resources:
     requests:
@@ -62,10 +107,29 @@ gateway:
       memory: 1Gi
 
   autoscaling:
+    enabled: true
     minReplicas: 3
     maxReplicas: 20
     targetCPU: 70
     targetMemory: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  service:
+    type: LoadBalancer
+    port: 443
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: gateway.appgate.local
+        paths:
+          - path: /
+            pathType: Prefix
 
 # ── Monitoring ────────────────────────────────────────────────────
 prometheus:
@@ -96,3 +160,11 @@ grafana:
             path: /var/lib/grafana/dashboards/appgate
   dashboardsConfigMaps:
     appgate: appgate-grafana-dashboards
+
+# ── Cert-Manager ──────────────────────────────────────────────────
+certManager:
+  enabled: false
+  issuer:
+    name: appgate-issuer
+    kind: ClusterIssuer
+    email: admin@appgate.local

@@ -11,7 +11,23 @@ target/
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Local env
 .env
 *.env
+
+# Docs
+*.md
+docs/
+
+# Terraform
+terraform/
+infra/
+
+# Helm
+charts/
+deploy/
+
+# Security
+security/

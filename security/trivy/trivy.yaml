@@ -1,0 +1,26 @@
+# Trivy configuration — FedRAMP-ready
+# https://aquasecurity.github.io/trivy/latest/docs/reference/configuration/
+severity:
+  - HIGH
+  - CRITICAL
+
+scanners:
+  - vuln
+  - secret
+  - misconfig
+
+skip-dirs:
+  - .git
+  - vendor
+  - target
+  - node_modules
+  - .terraform
+
+timeout: 10m
+
+db:
+  no-progress: true
+
+# Ignore unfixed CVEs in base images
+# Format: CVE-ID # TICKET-ID: reason
+ignore-unfixed: true

@@ -7,12 +7,12 @@ metadata:
     app.kubernetes.io/name: appgate-control-plane
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  replicas: {{ .Values.controlPlane.replicas }}
+  replicas: {{ .Values.controlPlane.replicas | default 3 }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+      maxUnavailable: {{ .Values.controlPlane.strategy.maxUnavailable | default 0 }}
+      maxSurge: {{ .Values.controlPlane.strategy.maxSurge | default 1 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: appgate-control-plane
@@ -29,12 +29,7 @@ spec:
     spec:
       serviceAccountName: {{ include "appgate.fullname" . }}-control-plane
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
-        seccompProfile:
-          type: RuntimeDefault
+        {{- toYaml .Values.controlPlane.podSecurityContext | default (dict "runAsNonRoot" true "runAsUser" 65534 "runAsGroup" 65534 "fsGroup" 65534 "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 8 }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -46,6 +41,8 @@ spec:
         - name: control-plane
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.controlPlane.securityContext | default (dict "runAsNonRoot" true "runAsUser" 65534 "runAsGroup" 65534 "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 12 }}
           ports:
             - containerPort: {{ .Values.controlPlane.port }}
               name: http

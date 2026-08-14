@@ -1,0 +1,49 @@
+# AppGate Go Control Plane — golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - typecheck
+    - unused
+    - misspell
+    - gofmt
+    - goimports
+    - revive
+    - gosec
+    - nilerr
+    - unconvert
+  disable:
+    - exhaustruct
+    - exhaustivestruct
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: appgate-control-plane
+  misspell:
+    locale: US
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: package-comments
+        disabled: true
+  gosec:
+    excludes:
+      - G107  # URL injection via req — false positive for controlled URLs
+      - G404  # Insecure random — using crypto/rand where needed

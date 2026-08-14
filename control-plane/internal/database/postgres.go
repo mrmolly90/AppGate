@@ -76,11 +76,13 @@ func (p *Postgres) Migrate() error {
 
 const createIdentitiesTable = `
 CREATE TABLE IF NOT EXISTS identities (
-    id          TEXT PRIMARY KEY,
-    email       TEXT UNIQUE NOT NULL,
-    roles       TEXT[] NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id            TEXT PRIMARY KEY,
+    email         TEXT UNIQUE NOT NULL,
+    client_secret TEXT NOT NULL DEFAULT '',
+    roles         TEXT[] NOT NULL DEFAULT '{}',
+    enabled       BOOLEAN NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 `
 

@@ -20,6 +20,7 @@ type Policy struct {
 
 // PolicySpec is the core policy definition.
 type PolicySpec struct {
+	Name      string          `json:"name" yaml:"name"`
 	Subjects  SubjectSelector `json:"subjects" yaml:"subjects"`
 	Providers []string        `json:"providers" yaml:"providers"`
 	Models    []string        `json:"models" yaml:"models"`
@@ -72,6 +73,9 @@ func NewPolicy(name string, spec PolicySpec, createdBy string) *Policy {
 
 // Validate checks that a policy spec is valid.
 func (s *PolicySpec) Validate() error {
+	if s.Name == "" {
+		return fmt.Errorf("policy must have a name")
+	}
 	if len(s.Subjects.Roles) == 0 && len(s.Subjects.Users) == 0 && len(s.Subjects.Groups) == 0 {
 		return fmt.Errorf("policy must have at least one subject selector")
 	}

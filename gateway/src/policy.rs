@@ -4,6 +4,7 @@
 //! Policies are fetched from the control plane and cached locally.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
@@ -57,14 +58,61 @@ pub struct EvaluationResult {
 pub struct Engine {
     policies: ArcSwap<Vec<Policy>>,
     control_plane_url: String,
+    client: reqwest::Client,
 }
 
 impl Engine {
     pub fn new(control_plane_url: String) -> Self {
-        Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("failed to build HTTP client");
+
+        let engine = Self {
             policies: ArcSwap::new(Arc::new(Vec::new())),
             control_plane_url,
-        }
+            client,
+        };
+
+        // Start background policy refresh
+        engine.start_policy_refresh();
+
+        engine
+    }
+
+    /// Start a background task to periodically refresh policies from the control plane
+    fn start_policy_refresh(&self) {
+        let url = format!(
+            "{}/v1/policies",
+            self.control_plane_url.trim_end_matches('/')
+        );
+        let client = self.client.clone();
+        let policies = self.policies.clone();
+
+        tokio::spawn(async move {
+            loop {
+                match client.get(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<Vec<Policy>>().await {
+                            Ok(fetched) => {
+                                tracing::info!(count = fetched.len(), "policies refreshed");
+                                policies.store(Arc::new(fetched));
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "failed to parse policies response");
+                            }
+                        }
+                    }
+                    Ok(resp) => {
+                        tracing::warn!(status = %resp.status(), "policies fetch returned non-success");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to fetch policies from control plane");
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
     }
 
     /// Evaluate a request against all policies

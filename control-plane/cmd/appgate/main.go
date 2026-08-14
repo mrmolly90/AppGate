@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -25,6 +26,10 @@ func main() {
 
 	// Configuration from environment
 	cfg := loadConfig()
+
+	if cfg.DatabaseURL == "" {
+		log.Fatal().Msg("DATABASE_URL is required")
+	}
 
 	// Initialize database
 	db, err := database.NewPostgres(cfg.DatabaseURL)
@@ -94,6 +99,8 @@ func main() {
 
 	gatewayRouter.HandleFunc("/gateways/register", apiHandler.RegisterGateway).Methods("POST")
 	gatewayRouter.HandleFunc("/policies/evaluate", apiHandler.EvaluatePolicy).Methods("POST")
+	gatewayRouter.HandleFunc("/audit", apiHandler.CreateAuditEvent).Methods("POST")
+	gatewayRouter.HandleFunc("/providers", apiHandler.ListProviders).Methods("GET")
 
 	// Server with graceful shutdown
 	srv := &http.Server{
@@ -137,7 +144,7 @@ type Config struct {
 func loadConfig() Config {
 	return Config{
 		Port:           getEnv("PORT", "8443"),
-		DatabaseURL:    getEnv("DATABASE_URL", "postgres://appgate:appgate@localhost:5432/appgate?sslmode=disable"),
+		DatabaseURL:    getEnv("DATABASE_URL", ""),
 		SigningKeyPath: getEnv("SIGNING_KEY_PATH", "/etc/appgate/keys/signing.pem"),
 		JWTIssuer:      getEnv("JWT_ISSUER", "appgate-control-plane"),
 		JWTAudience:    getEnv("JWT_AUDIENCE", "appgate-gateway"),

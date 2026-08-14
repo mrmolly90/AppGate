@@ -187,6 +187,12 @@ func contextWithClaims(ctx context.Context, claims *Claims) context.Context {
 	return context.WithValue(ctx, claimsKey, claims)
 }
 
+// ClaimsFromContext retrieves JWT claims from the request context.
+// Returns nil, false if no claims are present.
+func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
+	return claimsFromContext(ctx)
+}
+
 func claimsFromContext(ctx context.Context) (*Claims, bool) {
 	claims, ok := ctx.Value(claimsKey).(*Claims)
 	return claims, ok

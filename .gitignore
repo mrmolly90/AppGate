@@ -1,0 +1,44 @@
+# Binaries
+control-plane/bin/
+control-plane/tmp/
+gateway/target/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/settings.json
+.vscode/launch.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Terraform
+infra/terraform/**/.terraform/
+infra/terraform/**/terraform.tfstate
+infra/terraform/**/terraform.tfstate.backup
+infra/terraform/**/*.tfplan
+
+# Helm
+deploy/helm/**/charts/
+deploy/helm/**/*.lock
+
+# Secrets
+**/secrets/
+**/keys/
+*.pem
+*.key
+*.cert
+
+# Logs
+*.log
+
+# Docker
+.docker/

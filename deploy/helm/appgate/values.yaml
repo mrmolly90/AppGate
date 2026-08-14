@@ -5,6 +5,10 @@
 global:
   environment: production
 
+# ── Flagger (optional) ────────────────────────────────────────────
+flagger:
+  enabled: false
+
 # ── Control Plane ─────────────────────────────────────────────────
 controlPlane:
   port: 8443
@@ -78,20 +82,17 @@ prometheus:
 
 grafana:
   enabled: true
-  grafana:
-    dashboardProviders:
-      dashboardproviders.yaml:
-        apiVersion: 1
-        providers:
-          - name: appgate
-            orgId: 1
-            folder: AppGate
-            type: file
-            disableDeletion: false
-            editable: true
-            options:
-              path: /var/lib/grafana/dashboards/appgate
-    dashboards:
-      appgate:
-        appgate-overview:
-          url: https://raw.githubusercontent.com/mrmolly90/AppGate/main/observability/grafana/dashboards/appgate-overview.json
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: appgate
+          orgId: 1
+          folder: AppGate
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/appgate
+  dashboardsConfigMaps:
+    appgate: appgate-grafana-dashboards

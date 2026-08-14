@@ -13,11 +13,6 @@ processors:
   memory_limiter:
     check_interval: 1s
     limit_mib: 512
-  attributes:
-    actions:
-      - key: appgate.component
-        value: gateway
-        action: insert
 
 exporters:
   prometheus:

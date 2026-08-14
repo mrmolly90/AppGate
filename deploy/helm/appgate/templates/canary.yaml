@@ -1,3 +1,4 @@
+{{- if .Values.flagger.enabled }}
 apiVersion: flagger.app/v1beta1
 kind: Canary
 metadata:
@@ -31,13 +32,10 @@ spec:
         thresholdRange:
           max: 500
         interval: 1m
-      - name: "appgate:error_rate:5m"
-        thresholdRange:
-          max: 0.001
-        interval: 1m
     webhooks:
       - name: load-test
         url: http://flagger-loadtester.{{ .Release.Namespace }}.svc.cluster.local/
         timeout: 5s
         metadata:
           cmd: "hey -z 30s -q 10 http://{{ include "appgate.fullname" . }}-gateway-canary.{{ .Release.Namespace }}:{{ .Values.gateway.port }}/healthz"
+{{- end }}

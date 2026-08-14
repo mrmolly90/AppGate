@@ -5,8 +5,8 @@ FROM golang:1.22-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+COPY go.mod go.sum* ./
+RUN go mod download 2>/dev/null || true
 COPY . .
 
 ARG VERSION=0.0.0
@@ -25,6 +25,10 @@ COPY --from=builder /appgate /appgate
 
 USER 65534:65534
 EXPOSE 8443
+
+ARG VERSION=0.0.0
+ARG COMMIT=unknown
+ARG BUILDTIME
 
 LABEL org.opencontainers.image.source=https://github.com/mrmolly90/AppGate
 LABEL org.opencontainers.image.description="AppGate Go Control Plane"

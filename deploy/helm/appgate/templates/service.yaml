@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appgate.fullname" . }}-control-plane
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: appgate-control-plane
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.controlPlane.port }}
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: appgate-control-plane
+    app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appgate.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: appgate-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: {{ .Values.gateway.serviceType }}
+  ports:
+    - port: {{ .Values.gateway.servicePort }}
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: appgate-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}

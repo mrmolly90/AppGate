@@ -20,9 +20,35 @@ import (
 	"appgate-control-plane/internal/database"
 )
 
+// Build-time injected via -ldflags
+var (
+	Version   = "0.0.0"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
 func main() {
-	// Structured logger
-	log.Logger = zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
+	// Structured logger with level from env
+	levelStr := os.Getenv("LOG_LEVEL")
+	level, err := zerolog.ParseLevel(levelStr)
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(level)
+
+	log.Logger = zerolog.New(os.Stderr).With().
+		Timestamp().
+		Caller().
+		Str("service", "appgate-control-plane").
+		Str("version", Version).
+		Str("commit", Commit).
+		Logger()
+
+	log.Info().
+		Str("version", Version).
+		Str("commit", Commit).
+		Str("build_time", BuildTime).
+		Msg("starting AppGate Control Plane")
 
 	// Configuration from environment
 	cfg := loadConfig()

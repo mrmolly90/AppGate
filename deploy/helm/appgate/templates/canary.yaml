@@ -1,0 +1,43 @@
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: {{ include "appgate.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+spec:
+  provider: kubernetes
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "appgate.fullname" . }}-gateway
+  autoscalerRef:
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    name: {{ include "appgate.fullname" . }}-gateway
+  service:
+    port: {{ .Values.gateway.port }}
+    targetPort: http
+    portDiscovery: true
+  analysis:
+    interval: 30s
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+      - name: request-success-rate
+        thresholdRange:
+          min: 99
+        interval: 1m
+      - name: request-duration
+        thresholdRange:
+          max: 500
+        interval: 1m
+      - name: "appgate:error_rate:5m"
+        thresholdRange:
+          max: 0.001
+        interval: 1m
+    webhooks:
+      - name: load-test
+        url: http://flagger-loadtester.{{ .Release.Namespace }}.svc.cluster.local/
+        timeout: 5s
+        metadata:
+          cmd: "hey -z 30s -q 10 http://{{ include "appgate.fullname" . }}-gateway-canary.{{ .Release.Namespace }}:{{ .Values.gateway.port }}/healthz"

@@ -1,0 +1,97 @@
+# AppGate Helm Values
+# Default values for production deployment
+
+# ── Global ────────────────────────────────────────────────────────
+global:
+  environment: production
+
+# ── Control Plane ─────────────────────────────────────────────────
+controlPlane:
+  port: 8443
+  replicas: 3
+  logLevel: info
+  jwtIssuer: appgate-control-plane
+  jwtAudience: appgate-gateway
+  databaseSecret: appgate-database
+  signingKeySecret: appgate-signing-key
+
+  image:
+    repository: ghcr.io/mrmolly90/appgate-control-plane
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPU: 70
+    targetMemory: 80
+
+# ── Gateway ───────────────────────────────────────────────────────
+gateway:
+  port: 8443
+  servicePort: 443
+  serviceType: LoadBalancer
+  replicas: 3
+  logLevel: appgate_gateway=info
+  otelEndpoint: http://otel-collector:4317
+  verifyingKeySecret: appgate-verifying-key
+
+  image:
+    repository: ghcr.io/mrmolly90/appgate-gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPU: 70
+    targetMemory: 80
+
+# ── Monitoring ────────────────────────────────────────────────────
+prometheus:
+  enabled: true
+  prometheus:
+    prometheusSpec:
+      ruleSelectorNilUsesHelmValues: false
+      serviceMonitorSelectorNilUsesHelmValues: false
+      additionalRules:
+        - groups:
+            - name: appgate-slos
+              interval: 30s
+              rules: []
+
+grafana:
+  enabled: true
+  grafana:
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: appgate
+            orgId: 1
+            folder: AppGate
+            type: file
+            disableDeletion: false
+            editable: true
+            options:
+              path: /var/lib/grafana/dashboards/appgate
+    dashboards:
+      appgate:
+        appgate-overview:
+          url: https://raw.githubusercontent.com/mrmolly90/AppGate/main/observability/grafana/dashboards/appgate-overview.json

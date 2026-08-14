@@ -1,0 +1,167 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "AppGate Gateway Overview",
+  "uid": "appgate-gateway-overview",
+  "version": 1,
+  "timezone": "utc",
+  "tags": ["appgate", "llm", "security"],
+  "panels": [
+    {
+      "title": "Request Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(appgate_requests_total[5m])) by (provider, model)",
+          "legendFormat": "{{provider}}/{{model}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        }
+      }
+    },
+    {
+      "title": "p99 Latency",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "appgate:p99_latency_overall:5m",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "50",
+          "legendFormat": "SLO Target (50ms)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "appgate:error_rate:5m",
+          "legendFormat": "Error Rate"
+        },
+        {
+          "expr": "0.001",
+          "legendFormat": "SLO Target (0.1%)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      }
+    },
+    {
+      "title": "Auth Failures",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(appgate_auth_failures_total[5m])",
+          "legendFormat": "auth failures"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      }
+    },
+    {
+      "title": "Rate Limited Requests",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(appgate_rate_limit_total[5m])",
+          "legendFormat": "rate limited"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      }
+    },
+    {
+      "title": "Upstream Duration",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(appgate_upstream_duration_bucket[5m])) by (le, provider))",
+          "legendFormat": "p99 {{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "title": "SLO Compliance",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 16, "w": 4, "h": 6},
+      "targets": [
+        {
+          "expr": "appgate:availability:5m",
+          "legendFormat": "Availability"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 0.999},
+              {"color": "green", "value": 0.9999}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Active Identities",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 16, "w": 4, "h": 6},
+      "targets": [
+        {
+          "expr": "count(count by (identity) (rate(appgate_requests_total[5m])))",
+          "legendFormat": "Active Identities"
+        }
+      ]
+    },
+    {
+      "title": "Policy Denials",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 16, "w": 4, "h": 6},
+      "targets": [
+        {
+          "expr": "sum(rate(appgate_policy_denials_total[5m]))",
+          "legendFormat": "Policy Denials/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps"
+        }
+      }
+    }
+  ]
+}

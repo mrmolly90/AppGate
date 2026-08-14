@@ -1,0 +1,56 @@
+# Falco Runtime Security Rules for AppGate
+- rule: AppGate - Unauthorized Process Execution
+  desc: Detect unauthorized processes running in AppGate containers
+  condition: >
+    container.image.repository startswith "ghcr.io/mrmolly90/appgate"
+    and not proc.name in (appgate, appgate-gateway)
+  output: >
+    Unauthorized process (%proc.name) in AppGate container
+    (image=%container.image.repository %container.info)
+  priority: CRITICAL
+  tags: [appgate, container, process]
+
+- rule: AppGate - Unexpected Outbound Connection
+  desc: Detect outbound connections from gateway to non-approved destinations
+  condition: >
+    container.image.repository startswith "ghcr.io/mrmolly90/appgate-gateway"
+    and evt.type in (connect, sendto)
+    and not fd.sip.name in (otel-collector, appgate-control-plane, api.openai.com, api.anthropic.com)
+  output: >
+    Unexpected outbound connection from gateway
+    (fd=%fd.name %fd.sip:%fd.sport -> %fd.dip:%fd.dport)
+  priority: CRITICAL
+  tags: [appgate, network, ssrf]
+
+- rule: AppGate - Shell Spawned
+  desc: Detect shell execution inside AppGate containers
+  condition: >
+    container.image.repository startswith "ghcr.io/mrmolly90/appgate"
+    and proc.name in (sh, bash, ash, dash, zsh, busybox)
+  output: >
+    Shell spawned in AppGate container (%proc.name %proc.cmdline)
+  priority: CRITICAL
+  tags: [appgate, container, shell]
+
+- rule: AppGate - Privilege Escalation
+  desc: Detect privilege escalation attempts
+  condition: >
+    container.image.repository startswith "ghcr.io/mrmolly90/appgate"
+    and evt.type in (setuid, setgid, setreuid, setregid)
+    and proc.name != appgate
+  output: >
+    Privilege escalation attempt (%evt.type) by %proc.name
+  priority: CRITICAL
+  tags: [appgate, container, privilege]
+
+- rule: AppGate - Write to Sensitive Path
+  desc: Detect writes to sensitive filesystem paths
+  condition: >
+    container.image.repository startswith "ghcr.io/mrmolly90/appgate"
+    and evt.type in (open, openat, creat)
+    and fd.name startswith /etc/appgate/keys
+    and evt.dir = <
+  output: >
+    Write to sensitive path %fd.name by %proc.name
+  priority: HIGH
+  tags: [appgate, container, filesystem]

@@ -1,0 +1,81 @@
+# AppGate SLO Recording Rules
+groups:
+  - name: appgate-slos
+    interval: 30s
+    rules:
+      # ── Latency SLO: p99 < 50ms ────────────────────────────────
+      - record: appgate:p99_latency:5m
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(appgate_request_duration_bucket[5m])) by (le, provider, model)
+          )
+        labels:
+          slo: latency
+          target: "50"
+
+      - record: appgate:p99_latency_overall:5m
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(appgate_request_duration_bucket[5m])) by (le)
+          )
+
+      # ── Error Rate SLO: < 0.1% ─────────────────────────────────
+      - record: appgate:error_rate:5m
+        expr: |
+          sum(rate(appgate_upstream_errors_total[5m]))
+          /
+          sum(rate(appgate_requests_total[5m]))
+        labels:
+          slo: error_rate
+          target: "0.001"
+
+      - record: appgate:auth_failure_rate:5m
+        expr: |
+          sum(rate(appgate_auth_failures_total[5m]))
+          /
+          sum(rate(appgate_requests_total[5m]))
+
+      # ── Request Rate ────────────────────────────────────────────
+      - record: appgate:request_rate:5m
+        expr: sum(rate(appgate_requests_total[5m]))
+
+      # ── Availability SLO: 99.9% ─────────────────────────────────
+      - record: appgate:availability:5m
+        expr: |
+          (sum(rate(appgate_requests_total[5m])) - sum(rate(appgate_upstream_errors_total[5m])))
+          /
+          sum(rate(appgate_requests_total[5m]))
+        labels:
+          slo: availability
+          target: "0.999"
+
+  # ── SLO Burn Rate Alerts ────────────────────────────────────────
+  - name: appgate-slo-alerts
+    interval: 1m
+    rules:
+      - alert: AppGateHighLatency
+        expr: appgate:p99_latency_overall:5m > 50
+        for: 5m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: "p99 latency {{ $value | humanizeDuration }} exceeds SLO target of 50ms"
+
+      - alert: AppGateHighErrorRate
+        expr: appgate:error_rate:5m > 0.001
+        for: 5m
+        labels:
+          severity: critical
+          slo: error_rate
+        annotations:
+          summary: "Error rate {{ $value | humanizePercentage }} exceeds SLO target of 0.1%"
+
+      - alert: AppGateLowAvailability
+        expr: appgate:availability:5m < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Availability {{ $value | humanizePercentage }} below SLO target of 99.9%"

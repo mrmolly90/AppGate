@@ -32,6 +32,7 @@ pub struct GatewayState {
     pub router: Arc<Router>,
     pub audit_logger: Arc<AuditLogger>,
     pub http_client: Arc<reqwest::Client>,
+    pub ssrf_defense: Arc<crate::ssrf::SSRFDefense>,
 }
 
 impl GatewayState {
@@ -40,12 +41,16 @@ impl GatewayState {
         policy_engine: Engine,
         rate_limiter: RateLimiter,
         router: Router,
+        control_plane_url: String,
     ) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
-            .expect("failed to build HTTP client");
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "failed to build HTTP client with custom config, using default");
+                reqwest::Client::new()
+            });
 
         Self {
             jwt_validator: Arc::new(jwt_validator),
@@ -53,10 +58,11 @@ impl GatewayState {
             rate_limiter: Arc::new(rate_limiter),
             router: Arc::new(router),
             audit_logger: Arc::new(AuditLogger::new(
-                "http://localhost:8443".into(),
+                control_plane_url,
                 http_client.clone(),
             )),
             http_client: Arc::new(http_client),
+            ssrf_defense: Arc::new(crate::ssrf::SSRFDefense::new()),
         }
     }
 }
@@ -173,6 +179,25 @@ pub async fn handle_chat_completion(
         }
     };
 
+    // SSRF defense: validate upstream URL before forwarding
+    if let Err(reason) = state.ssrf_defense.validate_upstream(&upstream_url) {
+        tracing::warn!(upstream = %upstream_url, reason = %reason, "SSRF defense blocked upstream request");
+        state.audit_logger.record(AuditEvent {
+            event_type: "ssrf.blocked".into(),
+            actor_id: validated.identity_id,
+            action: "llm_request".into(),
+            resource: format!("{}/{}", provider, model),
+            result: "denied".into(),
+            correlation_id: correlation_id.clone(),
+            source: "gateway".into(),
+            metadata: std::collections::HashMap::new(),
+        });
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({
+            "error": "upstream destination not allowed"
+        })))
+        .into_response()
+    }
+
     // Build upstream request URL
     let upstream = format!("{}/v1/chat/completions", upstream_url.trim_end_matches('/'));
 
@@ -221,15 +246,11 @@ pub async fn handle_chat_completion(
                 result: "error".into(),
                 correlation_id: correlation_id.clone(),
                 source: "gateway".into(),
-                metadata: {
-                    let mut m = std::collections::HashMap::new();
-                    m.insert("error".into(), e.to_string());
-                    m
-                },
+                metadata: std::collections::HashMap::new(),
             });
+            // Do NOT leak internal error details to the client
             return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({
-                "error": "upstream request failed",
-                "detail": e.to_string()
+                "error": "upstream request failed"
             })))
             .into_response()
         }

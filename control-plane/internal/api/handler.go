@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/bcrypt"
 
 	"appgate-control-plane/internal/auth"
 	"appgate-control-plane/internal/database"
@@ -61,8 +61,8 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Constant-time comparison to prevent timing attacks
-	if subtle.ConstantTimeCompare([]byte(req.ClientSecret), []byte(storedSecret)) != 1 {
+	// Compare hashed secret using bcrypt (constant-time under the hood)
+	if bcrypt.CompareHashAndPassword([]byte(storedSecret), []byte(req.ClientSecret)) != nil {
 		respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}

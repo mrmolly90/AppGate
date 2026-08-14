@@ -21,16 +21,11 @@ mod ssrf;
 mod telemetry;
 mod audit;
 
-use std::sync::Arc;
 use std::net::SocketAddr;
 
 use axum::{
     routing::{get, post},
     Router,
-    Json,
-    response::IntoResponse,
-    http::StatusCode,
-    extract::State,
 };
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -98,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         policy_engine,
         rate_limiter,
         router,
+        cfg.control_plane_url.clone(),
     );
 
     let app = Router::new()

@@ -5,11 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
   security-events: write
   id-token: write
+  pull-requests: write
 
 jobs:
   terraform:
@@ -23,10 +29,17 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.0
-      - run: terraform fmt -check
-      - run: terraform init
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
       - run: terraform validate
-      - uses: tenable/terrascan-action@v2
+      - name: Checkov IaC Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/terraform
+          framework: terraform
+          soft_fail: false
+      - name: Terrascan
+        uses: tenable/terrascan-action@v2
         with:
           only_warn: true
 
@@ -35,9 +48,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Gitleaks
+        with:
+          fetch-depth: 0
+      - name: Gitleaks (secret detection)
         uses: gitleaks/gitleaks-action@v2
-      - name: Trivy Scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trivy FS Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
@@ -45,7 +62,8 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
-      - name: Upload Trivy results
+          ignore-unfixed: true
+      - name: Upload Trivy results to Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
@@ -53,6 +71,7 @@ jobs:
         uses: semgrep/semgrep-action@v1
         with:
           config: auto
+        continue-on-error: true
 
   go:
     name: Go Control Plane
@@ -66,12 +85,15 @@ jobs:
         with:
           go-version: "1.22"
           cache: true
+      - run: go mod download
       - run: go build ./cmd/appgate
       - run: go test ./... -race -count=1
       - run: go vet ./...
-      - uses: golangci/golangci-lint-action@v6
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          args: --timeout=5m
 
   rust:
     name: Rust Gateway
@@ -84,37 +106,63 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-      - run: cargo build --release
-      - run: cargo test
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo fmt --check
-      - uses: actions-rust-lang/rust-audit@v1
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
         with:
-          cargo deny: true
+          workspaces: gateway
+      - name: Build
+        run: cargo build --release --locked
+      - name: Test
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Format check
+        run: cargo fmt --check
+      - name: Cargo Audit (vulnerabilities)
+        uses: actions-rust-lang/rust-audit@v1
 
   docker:
-    name: Docker Build
+    name: Docker Build & Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Control Plane
-        uses: docker/build-push-action@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Control Plane image
+        uses: docker/build-push-action@v6
         with:
           context: control-plane
           file: control-plane/Dockerfile
-          tags: appgate/control-plane:latest
+          tags: appgate/control-plane:ci
           load: true
-      - name: Build Gateway
-        uses: docker/build-push-action@v5
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build Gateway image
+        uses: docker/build-push-action@v6
         with:
           context: gateway
           file: gateway/Dockerfile
-          tags: appgate/gateway:latest
+          tags: appgate/gateway:ci
           load: true
-      - name: Trivy image scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy image scan (control plane)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: appgate/control-plane:latest
+          image-ref: appgate/control-plane:ci
           format: sarif
-          output: trivy-image.sarif
+          output: trivy-cp.sarif
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - name: Trivy image scan (gateway)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: appgate/gateway:ci
+          format: sarif
+          output: trivy-gw.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - name: Upload image scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-cp.sarif

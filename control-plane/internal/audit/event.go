@@ -1,9 +1,6 @@
 package audit
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
 	"time"
 )
 
@@ -53,43 +50,4 @@ type EventFilter struct {
 	ActorID    string      `json:"actor_id,omitempty"`
 	Limit      int         `json:"limit,omitempty"`
 	Offset     int         `json:"offset,omitempty"`
-}
-
-// NewEvent creates a new audit event with required fields.
-func NewEvent(eventType EventType, actorID, action, result string) *Event {
-	return &Event{
-		ID:        generateID(),
-		Timestamp: time.Now().UTC(),
-		EventType: eventType,
-		ActorID:   actorID,
-		Action:    action,
-		Result:    result,
-		Metadata:  make(map[string]string),
-	}
-}
-
-func generateID() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback: use timestamp-based ID if crypto/rand fails
-		return fmt.Sprintf("aev-%d", time.Now().UnixNano())
-	}
-	return fmt.Sprintf("aev-%d-%s", time.Now().UnixNano(), hex.EncodeToString(b))
-}
-
-func randomString(n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, n)
-	randBytes := make([]byte, n)
-	if _, err := rand.Read(randBytes); err != nil {
-		// Fallback: use timestamp-based string
-		for i := range b {
-			b[i] = letters[time.Now().UnixNano()%int64(len(letters))]
-		}
-		return string(b)
-	}
-	for i := range b {
-		b[i] = letters[int(randBytes[i])%len(letters)]
-	}
-	return string(b)
 }

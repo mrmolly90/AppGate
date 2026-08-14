@@ -78,7 +78,7 @@ const createIdentitiesTable = `
 CREATE TABLE IF NOT EXISTS identities (
     id            TEXT PRIMARY KEY,
     email         TEXT UNIQUE NOT NULL,
-    client_secret TEXT NOT NULL DEFAULT '',
+    client_secret TEXT NOT NULL DEFAULT '',  -- bcrypt hash of the client secret
     roles         TEXT[] NOT NULL DEFAULT '{}',
     enabled       BOOLEAN NOT NULL DEFAULT true,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),

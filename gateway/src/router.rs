@@ -32,7 +32,10 @@ impl Router {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("failed to build HTTP client");
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "failed to build router HTTP client, using default");
+                reqwest::Client::new()
+            });
 
         let router = Self {
             providers: ArcSwap::new(Arc::new(HashMap::new())),

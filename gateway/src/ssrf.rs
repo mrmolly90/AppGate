@@ -11,11 +11,32 @@ pub struct SSRFDefense {
     approved_ips: Vec<IpAddr>,
 }
 
+impl Default for SSRFDefense {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SSRFDefense {
     pub fn new() -> Self {
         Self {
             approved_domains: Vec::new(),
             approved_ips: Vec::new(),
+        }
+    }
+
+    /// Approve a domain for outbound connections
+    pub fn approve_domain(&mut self, domain: &str) {
+        let domain = domain.trim().to_lowercase();
+        if !domain.is_empty() && !self.approved_domains.contains(&domain) {
+            self.approved_domains.push(domain);
+        }
+    }
+
+    /// Approve an IP address for outbound connections
+    pub fn approve_ip(&mut self, ip: IpAddr) {
+        if !self.approved_ips.contains(&ip) {
+            self.approved_ips.push(ip);
         }
     }
 
@@ -35,6 +56,35 @@ impl SSRFDefense {
         }
 
         false
+    }
+
+    /// Validate an upstream URL against the SSRF defense.
+    /// Returns Ok(()) if the URL host is explicitly approved and not a private IP.
+    /// Returns Err with a reason otherwise.
+    pub fn validate_upstream(&self, url: &str) -> Result<(), String> {
+        let parsed = match url::Url::parse(url) {
+            Ok(u) => u,
+            Err(e) => return Err(format!("invalid upstream URL: {}", e)),
+        };
+
+        let host = match parsed.host_str() {
+            Some(h) => h.to_lowercase(),
+            None => return Err("upstream URL has no host".into()),
+        };
+
+        // If host is an IP literal, reject private/reserved ranges outright
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if Self::is_private_ip(ip) {
+                return Err(format!("upstream host {} is a private IP (SSRF blocked)", host));
+            }
+        }
+
+        // Host must be in the approved allowlist
+        if !self.is_host_allowed(&host) {
+            return Err(format!("upstream host {} is not in the approved allowlist (SSRF blocked)", host));
+        }
+
+        Ok(())
     }
 
     /// Check if an IP address is a private or reserved address

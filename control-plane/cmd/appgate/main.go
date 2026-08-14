@@ -54,6 +54,7 @@ func main() {
 
 	// Initialize router
 	router := mux.NewRouter()
+	router.Use(api.SecurityHeaders)
 
 	// Health checks
 	router.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -75,8 +76,9 @@ func main() {
 	apiHandler := api.NewHandler(db, jwtService)
 	apiRouter := router.PathPrefix("/v1").Subrouter()
 
-	// Public API
-	apiRouter.HandleFunc("/auth/token", apiHandler.CreateToken).Methods("POST")
+	// Public API (with rate limiting)
+	authLimiter := api.NewIPRateLimiter(10, 1.0) // 10 burst, 1 per second refill
+	apiRouter.Handle("/auth/token", api.RateLimitMiddleware(authLimiter, apiHandler.CreateToken)).Methods("POST")
 
 	// Protected API (admin)
 	adminRouter := apiRouter.PathPrefix("").Subrouter()

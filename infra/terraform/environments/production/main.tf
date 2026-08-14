@@ -47,6 +47,7 @@ module "eks" {
   cluster_name       = "appgate-production"
   kubernetes_version = "1.30"
   vpc_id            = module.vpc.vpc_id
+  vpc_cidr          = "10.2.0.0/16"
   private_subnet_ids = module.vpc.private_subnet_ids
   node_instance_types = ["m6i.large", "m6a.large"]
   node_desired_size  = 5

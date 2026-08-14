@@ -66,7 +66,10 @@ impl Engine {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("failed to build HTTP client");
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "failed to build policy HTTP client, using default");
+                reqwest::Client::new()
+            });
 
         let engine = Self {
             policies: ArcSwap::new(Arc::new(Vec::new())),

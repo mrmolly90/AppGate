@@ -22,6 +22,11 @@ variable "vpc_id" {
   type        = string
 }
 
+variable "vpc_cidr" {
+  description = "VPC CIDR block (e.g., 10.0.0.0/16)"
+  type        = string
+}
+
 variable "private_subnet_ids" {
   description = "Private subnet IDs for worker nodes"
   type        = list(string)
@@ -115,8 +120,7 @@ resource "aws_eks_cluster" "this" {
   vpc_config {
     subnet_ids              = var.private_subnet_ids
     endpoint_private_access = true
-    endpoint_public_access  = true  # Restricted by security group
-    public_access_cidrs     = ["10.0.0.0/8"]  # Only internal VPC traffic
+    endpoint_public_access  = false
     security_group_ids      = [aws_security_group.cluster.id]
   }
 
@@ -212,7 +216,7 @@ resource "aws_security_group" "node" {
     from_port       = 0
     to_port         = 0
     protocol        = "-1"
-    cidr_blocks     = [var.vpc_id]  # Only VPC traffic
+    cidr_blocks     = [var.vpc_cidr]
     description     = "Internal cluster traffic"
   }
 

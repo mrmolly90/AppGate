@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: appgate-control-plane
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  minAvailable: 2
+  minAvailable: {{ .Values.controlPlane.pdb.minAvailable | default 2 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: appgate-control-plane
@@ -22,7 +22,7 @@ metadata:
     app.kubernetes.io/name: appgate-gateway
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  minAvailable: 2
+  minAvailable: {{ .Values.gateway.pdb.minAvailable | default 2 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: appgate-gateway

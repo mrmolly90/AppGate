@@ -55,13 +55,13 @@ pub struct EvaluationResult {
 }
 
 /// Policy engine that evaluates requests against policies
-pub struct Engine {
+pub struct PolicyEngine {
     policies: ArcSwap<Vec<Policy>>,
     control_plane_url: String,
     client: reqwest::Client,
 }
 
-impl Engine {
+impl PolicyEngine {
     pub fn new(control_plane_url: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
@@ -77,18 +77,12 @@ impl Engine {
             client,
         };
 
-        // Start background policy refresh
         engine.start_policy_refresh();
-
         engine
     }
 
-    /// Start a background task to periodically refresh policies from the control plane
     fn start_policy_refresh(&self) {
-        let url = format!(
-            "{}/v1/policies",
-            self.control_plane_url.trim_end_matches('/')
-        );
+        let url = format!("{}/v1/policies", self.control_plane_url.trim_end_matches('/'));
         let client = self.client.clone();
         let policies = self.policies.clone();
 
@@ -98,6 +92,67 @@ impl Engine {
                     Ok(resp) if resp.status().is_success() => {
                         match resp.json::<Vec<Policy>>().await {
                             Ok(fetched) => {
+                                policies.store(Arc::new(fetched));
+                                tracing::info!(target: "appgate::policy", "Policies refreshed");
+                            }
+                            Err(e) => tracing::warn!(target: "appgate::policy", error = %e, "Failed to parse policies"),
+                        }
+                    }
+                    Ok(resp) => tracing::warn!(target: "appgate::policy", status = %resp.status(), "Policy fetch returned non-success"),
+                    Err(e) => tracing::warn!(target: "appgate::policy", error = %e, "Failed to fetch policies"),
+                }
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
+    }
+
+    /// Evaluate a request against cached policies.
+    /// Fail-closed: denies if no policies configured.
+    pub fn evaluate(&self, roles: &[String], provider: &str, model: &str) -> EvaluationResult {
+        let policies = self.policies.load();
+
+        if policies.is_empty() {
+            return EvaluationResult {
+                allowed: false,
+                policy_id: None,
+                reason: "No policies configured — fail closed".to_string(),
+            };
+        }
+
+        for policy in policies.iter() {
+            let spec = &policy.spec;
+
+            // Check subject match
+            let subject_match = match &spec.subjects.roles {
+                Some(allowed_roles) => roles.iter().any(|r| allowed_roles.contains(r)),
+                None => true,
+            };
+            if !subject_match { continue; }
+
+            // Check provider match
+            if !spec.providers.is_empty() && !spec.providers.contains(&provider.to_string()) {
+                continue;
+            }
+
+            // Check model match
+            if !spec.models.is_empty() && !spec.models.contains(&model.to_string()) {
+                continue;
+            }
+
+            return EvaluationResult {
+                allowed: true,
+                policy_id: Some(policy.id.clone()),
+                reason: "Access granted by policy".to_string(),
+            };
+        }
+
+        EvaluationResult {
+            allowed: false,
+            policy_id: None,
+            reason: "No matching policy found".to_string(),
+        }
+    }
+}
                                 tracing::info!(count = fetched.len(), "policies refreshed");
                                 policies.store(Arc::new(fetched));
                             }

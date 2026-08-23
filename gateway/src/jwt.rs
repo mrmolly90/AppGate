@@ -9,28 +9,17 @@ use std::sync::Arc;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, TokenData};
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
-
 /// AppGate JWT claims
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    /// Subject (identity ID)
     pub sub: String,
-    /// Issuer
     pub iss: String,
-    /// Audience
     pub aud: serde_json::Value,
-    /// Expiration
     pub exp: usize,
-    /// Issued at
     pub iat: usize,
-    /// Not before
     pub nbf: Option<usize>,
-    /// JWT ID
     pub jti: Option<String>,
-    /// Roles
     pub roles: Option<Vec<String>>,
-    /// Scope
     pub scope: Option<String>,
 }
 
@@ -44,22 +33,22 @@ pub struct ValidatedToken {
 }
 
 /// JWT validator with secure defaults
-pub struct Validator {
+pub struct JwtValidator {
     decoding_key: Arc<DecodingKey>,
     validation: Validation,
 }
 
-impl Validator {
-    /// Create a new JWT validator
-    pub fn new(cfg: &Config) -> anyhow::Result<Self> {
-        let pem = fs::read_to_string(&cfg.jwt_key_path)?;
+impl JwtValidator {
+    /// Create a new JWT validator from PEM key path, issuer, and audience.
+    pub fn new(key_path: &str, issuer: &str, audience: &str) -> anyhow::Result<Self> {
+        let pem = fs::read_to_string(key_path)?;
         let decoding_key = DecodingKey::from_rsa_pem(pem.as_bytes())?;
 
         let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_issuer(&[cfg.jwt_issuer.clone()]);
-        validation.set_audience(&[cfg.jwt_audience.clone()]);
+        validation.set_issuer(&[issuer]);
+        validation.set_audience(&[audience]);
         validation.set_required_spec_claims(&["sub", "iss", "aud", "exp", "iat"]);
-        validation.leeway = cfg.clock_skew_seconds as u64;
+        validation.leeway = 30;
         validation.validate_exp = true;
         validation.validate_nbf = true;
         validation.algorithms = vec![Algorithm::RS256, Algorithm::ES256];
@@ -70,17 +59,7 @@ impl Validator {
         })
     }
 
-    /// Validate a JWT token string
-    ///
-    /// Returns the validated token context or an error.
-    /// This function performs ALL of the following checks:
-    /// - Signature verification
-    /// - Issuer validation
-    /// - Audience validation
-    /// - Expiration check
-    /// - Not-before check
-    /// - Algorithm allowlist
-    /// - Required claims presence
+    /// Validate a JWT token string.
     pub fn validate(&self, token: &str) -> anyhow::Result<ValidatedToken> {
         let token_data: TokenData<Claims> = jsonwebtoken::decode(
             token,

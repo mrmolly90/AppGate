@@ -1,0 +1,34 @@
+# =============================================================================
+# AppGate — cert-manager Certificate
+# =============================================================================
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.certManager.issuer.name }}
+  labels:
+    {{- include "appgate.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "appgate.fullname" . }}-gateway-tls
+  labels:
+    {{- include "appgate.labels" . | nindent 4 }}
+spec:
+  secretName: appgate-gateway-tls
+  duration: {{ .Values.certManager.certificate.duration | default "8760h" }}
+  renewBefore: {{ .Values.certManager.certificate.renewBefore | default "360h" }}
+  subject:
+    organizations:
+      - AppGate
+  commonName: gateway.appgate.local
+  dnsNames:
+    - gateway.appgate.local
+    - "{{ .Release.Name }}-gateway.{{ .Release.Namespace }}.svc"
+  issuerRef:
+    name: {{ .Values.certManager.issuer.name }}
+    kind: {{ .Values.certManager.issuer.kind | default "Issuer" }}
+{{- end }}

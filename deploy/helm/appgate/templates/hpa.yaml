@@ -11,21 +11,21 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ include "appgate.fullname" . }}-control-plane
-  minReplicas: {{ .Values.controlPlane.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.controlPlane.autoscaling.maxReplicas }}
+  minReplicas: {{ .Values.controlPlane.hpa.minReplicas | default 2 }}
+  maxReplicas: {{ .Values.controlPlane.hpa.maxReplicas | default 10 }}
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: {{ .Values.controlPlane.autoscaling.targetCPU }}
+          averageUtilization: {{ .Values.controlPlane.hpa.targetCPUUtilizationPercentage | default 70 }}
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: {{ .Values.controlPlane.autoscaling.targetMemory }}
+          averageUtilization: {{ .Values.controlPlane.hpa.targetMemoryUtilizationPercentage | default 80 }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -40,18 +40,18 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ include "appgate.fullname" . }}-gateway
-  minReplicas: {{ .Values.gateway.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.gateway.autoscaling.maxReplicas }}
+  minReplicas: {{ .Values.gateway.hpa.minReplicas | default 3 }}
+  maxReplicas: {{ .Values.gateway.hpa.maxReplicas | default 50 }}
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: {{ .Values.gateway.autoscaling.targetCPU }}
+          averageUtilization: {{ .Values.gateway.hpa.targetCPUUtilizationPercentage | default 70 }}
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: {{ .Values.gateway.autoscaling.targetMemory }}
+          averageUtilization: {{ .Values.gateway.hpa.targetMemoryUtilizationPercentage | default 80 }}

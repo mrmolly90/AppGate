@@ -10,12 +10,12 @@ use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use std::sync::Arc;
 
 /// Rate limiter keyed by identity
-pub struct RateLimiter {
+pub struct IdentityRateLimiter {
     limiters: DashMap<String, Arc<DefaultDirectRateLimiter>>,
     default_quota: Quota,
 }
 
-impl RateLimiter {
+impl IdentityRateLimiter {
     pub fn new() -> Self {
         Self {
             limiters: DashMap::new(),
@@ -24,7 +24,6 @@ impl RateLimiter {
     }
 
     /// Check if a request is allowed for the given identity
-    /// Returns true if the request is within rate limits
     pub fn check(&self, identity_id: &str) -> bool {
         let limiter = self
             .limiters
@@ -35,19 +34,23 @@ impl RateLimiter {
     }
 }
 
+impl Default for IdentityRateLimiter {
+    fn default() -> Self { Self::new() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_rate_limiter_accepts_first_request() {
-        let limiter = RateLimiter::new();
+        let limiter = IdentityRateLimiter::new();
         assert!(limiter.check("test-user"));
     }
 
     #[test]
     fn test_rate_limiter_tracks_different_identities() {
-        let limiter = RateLimiter::new();
+        let limiter = IdentityRateLimiter::new();
         assert!(limiter.check("user-a"));
         assert!(limiter.check("user-b"));
     }

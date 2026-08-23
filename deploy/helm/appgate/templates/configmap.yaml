@@ -7,10 +7,10 @@ metadata:
     app.kubernetes.io/name: appgate-control-plane
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
-  PORT: "{{ .Values.controlPlane.port }}"
-  JWT_ISSUER: "{{ .Values.controlPlane.jwtIssuer }}"
-  JWT_AUDIENCE: "{{ .Values.controlPlane.jwtAudience }}"
-  LOG_LEVEL: "{{ .Values.controlPlane.logLevel }}"
+  PORT: "{{ .Values.controlPlane.service.port | default 8080 }}"
+  JWT_ISSUER: "{{ .Values.controlPlane.jwtIssuer | default "appgate-control-plane" }}"
+  JWT_AUDIENCE: "{{ .Values.controlPlane.jwtAudience | default "appgate-gateway" }}"
+  LOG_LEVEL: "{{ .Values.controlPlane.logLevel | default "info" }}"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -21,5 +21,5 @@ metadata:
     app.kubernetes.io/name: appgate-gateway
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
-  RUST_LOG: "{{ .Values.gateway.logLevel }}"
-  CONTROL_PLANE_URL: "http://{{ include "appgate.fullname" . }}-control-plane:{{ .Values.controlPlane.port }}"
+  RUST_LOG: "{{ .Values.gateway.logLevel | default "appgate=info,warn" }}"
+  CONTROL_PLANE_URL: "http://{{ include "appgate.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port | default 8080 }}"

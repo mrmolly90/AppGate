@@ -6,12 +6,16 @@ metadata:
   labels:
     app.kubernetes.io/name: appgate-control-plane
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: control-plane
 spec:
-  type: ClusterIP
+  type: {{ .Values.controlPlane.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.controlPlane.port }}
+    - port: {{ .Values.controlPlane.service.port | default 8080 }}
       targetPort: http
       name: http
+    - port: {{ .Values.controlPlane.service.metricsPort | default 9090 }}
+      targetPort: metrics
+      name: metrics
   selector:
     app.kubernetes.io/name: appgate-control-plane
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -24,12 +28,18 @@ metadata:
   labels:
     app.kubernetes.io/name: appgate-gateway
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gateway
+  annotations:
+    {{- toYaml .Values.gateway.service.annotations | default (dict) | nindent 4 }}
 spec:
-  type: {{ .Values.gateway.serviceType }}
+  type: {{ .Values.gateway.service.type | default "LoadBalancer" }}
   ports:
-    - port: {{ .Values.gateway.servicePort }}
-      targetPort: http
-      name: http
+    - port: {{ .Values.gateway.service.port | default 443 }}
+      targetPort: {{ .Values.gateway.service.targetPort | default 8443 }}
+      name: https
+    - port: {{ .Values.gateway.service.metricsPort | default 9090 }}
+      targetPort: metrics
+      name: metrics
   selector:
     app.kubernetes.io/name: appgate-gateway
     app.kubernetes.io/instance: {{ .Release.Name }}

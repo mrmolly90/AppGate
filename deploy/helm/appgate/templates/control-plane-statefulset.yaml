@@ -1,19 +1,17 @@
+# =============================================================================
+# AppGate — Control Plane StatefulSet
+# =============================================================================
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "appgate.fullname" . }}-control-plane
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: appgate-control-plane
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: control-plane
 spec:
+  serviceName: {{ include "appgate.fullname" . }}-control-plane
   replicas: {{ .Values.controlPlane.replicas | default 3 }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: appgate-control-plane
@@ -31,7 +29,12 @@ spec:
     spec:
       serviceAccountName: {{ include "appgate.fullname" . }}-control-plane
       securityContext:
-        {{- toYaml .Values.controlPlane.podSecurityContext | default (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "fsGroup" 65532 "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 8 }}
+        runAsNonRoot: true
+        runAsUser: {{ .Values.controlPlane.securityContext.runAsUser | default 65532 }}
+        runAsGroup: {{ .Values.controlPlane.securityContext.runAsGroup | default 65532 }}
+        fsGroup: {{ .Values.controlPlane.securityContext.fsGroup | default 65532 }}
+        seccompProfile:
+          type: {{ .Values.controlPlane.securityContext.seccompProfile.type | default "RuntimeDefault" }}
       {{- with .Values.controlPlane.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
@@ -41,7 +44,15 @@ spec:
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy | default "IfNotPresent" }}
           securityContext:
-            {{- toYaml .Values.controlPlane.securityContext | default (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 12 }}
+            runAsNonRoot: {{ .Values.controlPlane.securityContext.runAsNonRoot | default true }}
+            runAsUser: {{ .Values.controlPlane.securityContext.runAsUser | default 65532 }}
+            runAsGroup: {{ .Values.controlPlane.securityContext.runAsGroup | default 65532 }}
+            readOnlyRootFilesystem: {{ .Values.controlPlane.securityContext.readOnlyRootFilesystem | default true }}
+            capabilities:
+              drop: ["ALL"]
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: {{ .Values.controlPlane.securityContext.seccompProfile.type | default "RuntimeDefault" }}
           ports:
             - containerPort: {{ .Values.controlPlane.service.port | default 8080 }}
               name: http
@@ -49,12 +60,12 @@ spec:
             - containerPort: {{ .Values.controlPlane.service.metricsPort | default 9090 }}
               name: metrics
               protocol: TCP
-          {{- with .Values.controlPlane.envFrom }}
-          envFrom:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
           {{- with .Values.controlPlane.env }}
           env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.controlPlane.envFrom }}
+          envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- with .Values.controlPlane.volumeMounts }}

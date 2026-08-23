@@ -5,7 +5,7 @@ help: ## Show this help
 
 # ── Control Plane (Go) ────────────────────────────────────────────
 go-build: ## Build Go control plane binary
-	cd control-plane && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$(shell git describe --tags --always --dirty) -X main.Commit=$(shell git rev-parse --short HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o bin/appgate ./cmd/appgate
+	cd control-plane && CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$(shell git describe --tags --always --dirty) -X main.Commit=$(shell git rev-parse --short HEAD) -X main.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o bin/appgate ./cmd/server/
 
 go-test: ## Run Go unit tests
 	cd control-plane && go test ./... -race -shuffle=on -count=1 -timeout=60s -tags=unit

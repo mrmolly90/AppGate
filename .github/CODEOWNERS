@@ -1,0 +1,27 @@
+# =============================================================================
+# AppGate — CODEOWNERS
+# =============================================================================
+# Security-sensitive paths require 2 approvals from security team.
+# =============================================================================
+
+# Default owners
+* @mrmolly90
+
+# Security-sensitive paths
+/security/ @mrmolly90
+SECURITY.md @mrmolly90
+.github/workflows/ @mrmolly90
+.github/dependabot.yml @mrmolly90
+
+# Infrastructure
+/infra/terraform/ @mrmolly90
+/deploy/helm/ @mrmolly90
+/infra/cilium/ @mrmolly90
+
+# Core platform
+/gateway/src/ @mrmolly90
+/control-plane/ @mrmolly90
+/rust-gateway/ @mrmolly90
+
+# Observability
+/observability/ @mrmolly90

@@ -1,0 +1,76 @@
+# =============================================================================
+# AppGate — Dependabot Configuration
+# =============================================================================
+version: 2
+updates:
+  # ── Rust (gateway) ──────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: "/gateway"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - rust
+    groups:
+      rust-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── Go (control-plane) ──────────────────────────────────────────
+  - package-ecosystem: gomod
+    directory: "/control-plane"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - go
+    groups:
+      go-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── GitHub Actions ──────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # ── Docker ──────────────────────────────────────────────────────
+  - package-ecosystem: docker
+    directory: "/gateway"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    labels:
+      - dependencies
+      - docker
+  - package-ecosystem: docker
+    directory: "/control-plane"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    labels:
+      - dependencies
+      - docker

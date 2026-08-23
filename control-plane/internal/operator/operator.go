@@ -1,40 +1,30 @@
-// =============================================================================
-// AppGate Control Plane — Kubernetes Operator
-// =============================================================================
-//
-// controller-runtime based operator for managing AppGate CRDs.
-// Watches Gateway and Policy resources and reconciles state.
-// =============================================================================
-
 package operator
 
 import (
-	"fmt"
-
-	"appgate-control-plane/internal/config"
-
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+    "context"
+    "fmt"
+    "sigs.k8s.io/controller-runtime/pkg/manager"
+    "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
-// NewManager creates a new controller-runtime manager for the operator.
-func NewManager(cfg *config.Config) (manager.Manager, error) {
-	options := ctrl.Options{
-		MetricsBindAddress:     ":8081",
-		HealthProbeBindAddress: ":8082",
-		LeaderElection:         true,
-		LeaderElectionID:       "appgate-operator-leader",
-	}
+type Manager struct {
+    mgr manager.Manager
+}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create manager: %w", err)
-	}
+func NewManager(cfg *Config) (*Manager, error) {
+    mgr, err := manager.New(nil, manager.Options{
+        Metrics: server.Options{BindAddress: "0"},
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to create manager: %w", err)
+    }
+    return &Manager{mgr: mgr}, nil
+}
 
-	// TODO: Register controllers and webhooks here
-	// SetupScheme(mgr)
-	// NewGatewayReconciler(mgr)
-	// NewPolicyReconciler(mgr)
+func (m *Manager) Start(ctx context.Context) error {
+    return m.mgr.Start(ctx)
+}
 
-	return mgr, nil
+type Config struct {
+    KubeConfig interface{}
 }

@@ -1,9 +1,5 @@
 // =============================================================================
-// AppGate Control Plane — Configuration
-// =============================================================================
-//
-// Viper-based configuration loading with environment variable overrides.
-// Supports YAML config files and env vars for 12-factor app compliance.
+// AppGate Control Plane — Configuration (Production)
 // =============================================================================
 
 package config
@@ -15,37 +11,27 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config holds all configuration for the control plane.
 type Config struct {
-	// HTTP server
-	HTTPPort int `mapstructure:"http_port"`
-
-	// etcd
-	EtcdEndpoints   []string      `mapstructure:"etcd_endpoints"`
-	EtcdDialTimeout time.Duration `mapstructure:"etcd_dial_timeout"`
-
-	// Leader election
-	LeaderElectionKey string `mapstructure:"leader_election_key"`
-	InstanceID        string `mapstructure:"instance_id"`
-
-	// Rate limiting
-	RateLimitPerSecond int `mapstructure:"rate_limit_per_second"`
-	RateLimitBurst     int `mapstructure:"rate_limit_burst"`
-
-	// Kubernetes operator
-	EnableOperator bool   `mapstructure:"enable_operator"`
-	KubeConfigPath string `mapstructure:"kube_config_path"`
-
-	// Observability
-	OTLPEndpoint string `mapstructure:"otlp_endpoint"`
-	LogLevel     string `mapstructure:"log_level"`
+	HTTPPort           int           `mapstructure:"http_port"`
+	EtcdEndpoints      []string      `mapstructure:"etcd_endpoints"`
+	EtcdDialTimeout    time.Duration `mapstructure:"etcd_dial_timeout"`
+	LeaderElectionKey  string        `mapstructure:"leader_election_key"`
+	InstanceID         string        `mapstructure:"instance_id"`
+	RateLimitPerSecond int           `mapstructure:"rate_limit_per_second"`
+	RateLimitBurst     int           `mapstructure:"rate_limit_burst"`
+	EnableOperator     bool          `mapstructure:"enable_operator"`
+	KubeConfigPath     string        `mapstructure:"kube_config_path"`
+	OTLPEndpoint       string        `mapstructure:"otlp_endpoint"`
+	LogLevel           string        `mapstructure:"log_level"`
+	TLSCertPath        string        `mapstructure:"tls_cert_path"`
+	TLSKeyPath         string        `mapstructure:"tls_key_path"`
+	RedisURL           string        `mapstructure:"redis_url"`
+	DatabaseURL        string        `mapstructure:"database_url"`
 }
 
-// Load loads configuration from file and environment variables.
 func Load() (*Config, error) {
 	v := viper.New()
 
-	// Default values
 	v.SetDefault("http_port", 8080)
 	v.SetDefault("etcd_endpoints", []string{"localhost:2379"})
 	v.SetDefault("etcd_dial_timeout", 5*time.Second)
@@ -57,18 +43,19 @@ func Load() (*Config, error) {
 	v.SetDefault("kube_config_path", "")
 	v.SetDefault("otlp_endpoint", "http://otel-collector:4317")
 	v.SetDefault("log_level", "info")
+	v.SetDefault("tls_cert_path", "/etc/appgate/tls/cert.pem")
+	v.SetDefault("tls_key_path", "/etc/appgate/tls/key.pem")
+	v.SetDefault("redis_url", "redis://localhost:6379")
+	v.SetDefault("database_url", "postgres://localhost:5432/appgate")
 
-	// Config file
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 	v.AddConfigPath("/etc/appgate/")
 	v.AddConfigPath(".")
 
-	// Environment variables
 	v.SetEnvPrefix("APPGATE")
 	v.AutomaticEnv()
 
-	// Read config file (optional)
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("failed to read config file: %w", err)

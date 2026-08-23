@@ -1,194 +1,134 @@
-// =============================================================================
-// AppGate Control Plane — Main Entry Point
-// =============================================================================
-//
-// Architecture:
-//   - gRPC API with protobuf definitions
-//   - etcd as configuration store with watch patterns
-//   - Kubernetes operator pattern for CRD management
-//   - Leader election for control plane HA
-//   - Structured logging with zap + OpenTelemetry tracing
-//   - Circuit breaker pattern for downstream calls
-//   - Rate limiting with token bucket algorithm
-// =============================================================================
-
 package main
 
 import (
-	"context"
-	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"runtime"
-	"syscall"
-	"time"
+    "context"
+    "database/sql"
+    "fmt"
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	"appgate-control-plane/internal/config"
-	"appgate-control-plane/internal/leader"
-	"appgate-control-plane/internal/operator"
-	"appgate-control-plane/internal/ratelimit"
-	"appgate-control-plane/internal/store"
+    "appgate-control-plane/internal/api"
+    "appgate-control-plane/internal/audit"
+    "appgate-control-plane/internal/auth"
+    "appgate-control-plane/internal/config"
+    "appgate-control-plane/internal/leader"
+    "appgate-control-plane/internal/store"
 
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-)
-
-var (
-	Version   = "0.2.0"
-	Commit    = "unknown"
-	BuildTime = "unknown"
+    "github.com/gorilla/mux"
+    "go.uber.org/zap"
 )
 
 func main() {
-	// ── Structured logger ─────────────────────────────────────────
-	logger, _ := zap.Config{
-		Level:            zap.NewAtomicLevelAt(zapcore.InfoLevel),
-		Encoding:         "json",
-		EncoderConfig:    zap.NewProductionEncoderConfig(),
-		OutputPaths:      []string{"stdout"},
-		ErrorOutputPaths: []string{"stderr"},
-	}.Build()
-	defer logger.Sync()
+    logger, _ := zap.NewProduction()
+    defer logger.Sync()
+    sugar := logger.Sugar()
 
-	sugar := logger.Sugar()
+    cfg, err := config.Load()
+    if err != nil {
+        sugar.Fatalf("Failed to load config: %v", err)
+    }
 
-	// ── Load configuration ────────────────────────────────────────
-	cfg, err := config.Load()
-	if err != nil {
-		sugar.Fatalf("Failed to load config: %v", err)
-	}
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
 
-	sugar.Infow("Starting AppGate Control Plane",
-		"version", Version,
-		"commit", Commit,
-		"build_time", BuildTime,
-		"go_version", runtime.Version(),
-		"etcd_endpoints", cfg.EtcdEndpoints,
-	)
+    // Database (placeholder - no actual connection for now)
+    db, _ := sql.Open("postgres", cfg.DatabaseURL)
+    defer db.Close()
 
-	// ── Context with graceful shutdown ────────────────────────────
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+    // etcd store
+    etcdStore, err := store.NewEtcdStore(ctx, cfg.EtcdEndpoints, 5*time.Second)
+    if err != nil {
+        sugar.Fatalf("Failed to connect to etcd: %v", err)
+    }
+    defer etcdStore.Close()
 
-	// ── Initialize etcd store ─────────────────────────────────────
-	etcdStore, err := store.NewEtcdStore(ctx, cfg.EtcdEndpoints, cfg.EtcdDialTimeout)
-	if err != nil {
-		sugar.Fatalf("Failed to connect to etcd: %v", err)
-	}
-	defer etcdStore.Close()
+    // Leader election
+    elector, err := leader.NewElector(etcdStore.Client(), cfg.LeaderElectionKey, cfg.InstanceID, logger)
+    if err != nil {
+        sugar.Fatalf("Failed to create leader elector: %v", err)
+    }
+    go elector.Run(ctx)
 
-	// ── Leader election ───────────────────────────────────────────
-	elector, err := leader.NewElector(etcdStore.Client(), cfg.LeaderElectionKey, cfg.InstanceID)
-	if err != nil {
-		sugar.Fatalf("Failed to create leader elector: %v", err)
-	}
+    // Auth service
+    authService := auth.NewService(cfg, db, sugar)
 
-	go elector.Run(ctx)
-	sugar.Info("Leader election started")
+    // Audit logger
+    auditLogger := audit.NewLogger(db, sugar)
 
-	// ── Rate limiter ──────────────────────────────────────────────
-	rateLimiter := ratelimit.NewTokenBucket(cfg.RateLimitPerSecond, cfg.RateLimitBurst)
+    // Router
+    router := mux.NewRouter()
+    router.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        fmt.Fprintln(w, "ok")
+    }).Methods("GET")
+    router.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+        if elector.IsLeader() || elector.IsHealthy() {
+            w.WriteHeader(http.StatusOK)
+            fmt.Fprintln(w, "ready")
+        } else {
+            w.WriteHeader(http.StatusServiceUnavailable)
+            fmt.Fprintln(w, "not_ready")
+        }
+    }).Methods("GET")
 
-	// ── Kubernetes operator ───────────────────────────────────────
-	if cfg.EnableOperator {
-		mgr, err := operator.NewManager(cfg)
-		if err != nil {
-			sugar.Warnw("Failed to create operator manager (non-fatal)", "error", err)
-		} else {
-			go func() {
-				if err := mgr.Start(ctx); err != nil {
-					sugar.Errorw("Operator manager stopped", "error", err)
-				}
-			}()
-			sugar.Info("Kubernetes operator started")
-		}
-	}
+    // API v1
+    apiV1 := router.PathPrefix("/v1").Subrouter()
+    apiV1.Use(authService.Middleware())
+    apiV1.Use(auditLogger.Middleware())
 
-	// ── HTTP server with pprof ────────────────────────────────────
-	mux := http.NewServeMux()
+    apiV1.HandleFunc("/auth/token", authService.HandleToken).Methods("POST")
+    apiV1.HandleFunc("/auth/refresh", authService.HandleRefresh).Methods("POST")
+    apiV1.HandleFunc("/auth/revoke", authService.HandleRevoke).Methods("POST")
+    apiV1.HandleFunc("/auth/introspect", authService.HandleIntrospect).Methods("GET")
 
-	// Health check
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok")
-	})
+    apiV1.HandleFunc("/policies", api.HandleListPolicies(db)).Methods("GET")
+    apiV1.HandleFunc("/policies", api.HandleCreatePolicy(db, elector)).Methods("POST")
+    apiV1.HandleFunc("/policies/{id}", api.HandleGetPolicy(db)).Methods("GET")
+    apiV1.HandleFunc("/policies/{id}", api.HandleUpdatePolicy(db, elector)).Methods("PUT")
+    apiV1.HandleFunc("/policies/{id}", api.HandleDeletePolicy(db, elector)).Methods("DELETE")
+    apiV1.HandleFunc("/policies/{id}/validate", api.HandleValidatePolicy(db)).Methods("POST")
 
-	// Readiness check
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if elector.IsLeader() {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintln(w, "ready")
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintln(w, "not leader")
-		}
-	})
+    apiV1.HandleFunc("/gateways", api.HandleListGateways(etcdStore)).Methods("GET")
+    apiV1.HandleFunc("/gateways/register", api.HandleRegisterGateway(etcdStore)).Methods("POST")
+    apiV1.HandleFunc("/gateways/heartbeat", api.HandleGatewayHeartbeat(etcdStore)).Methods("POST")
 
-	// pprof endpoints (debugging)
-	mux.HandleFunc("/debug/pprof/", http.DefaultServeMux.ServeHTTP)
+    apiV1.HandleFunc("/audit/events", api.HandleQueryAudit(db)).Methods("GET")
+    apiV1.HandleFunc("/audit/events/export", api.HandleExportAudit(db)).Methods("POST")
+    apiV1.HandleFunc("/audit/batch", api.HandleAuditBatch(db)).Methods("POST")
 
-	// API routes
-	mux.Handle("/v1/", apiHandler(cfg, etcdStore, rateLimiter, elector, sugar))
+    // Public JWKS
+    router.HandleFunc("/.well-known/jwks.json", authService.HandleJWKS).Methods("GET")
 
-	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+    server := &http.Server{
+        Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
+        Handler:      router,
+        ReadTimeout:  30 * time.Second,
+        WriteTimeout: 30 * time.Second,
+        IdleTimeout:  120 * time.Second,
+    }
 
-	// ── Graceful shutdown ─────────────────────────────────────────
-	go func() {
-		sugar.Infow("HTTP server listening", "port", cfg.HTTPPort)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			sugar.Fatalf("HTTP server error: %v", err)
-		}
-	}()
+    go func() {
+        sugar.Infow("Server listening", "port", cfg.HTTPPort)
+        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            sugar.Fatalf("Server error: %v", err)
+        }
+    }()
 
-	// Wait for shutdown signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+    <-quit
 
-	sugar.Infow("Shutting down", "signal", sig.String())
+    sugar.Info("Shutting down...")
+    shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer shutdownCancel()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
+    if err := server.Shutdown(shutdownCtx); err != nil {
+        sugar.Errorw("Forced shutdown", "error", err)
+    }
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		sugar.Errorw("HTTP server forced shutdown", "error", err)
-	}
-
-	sugar.Info("Control plane stopped")
-}
-
-func apiHandler(
-	cfg *config.Config,
-	etcdStore *store.EtcdStore,
-	rateLimiter *ratelimit.TokenBucket,
-	elector *leader.Elector,
-	logger *zap.SugaredLogger,
-) http.Handler {
-	mux := http.NewServeMux()
-
-	// Policy CRUD
-	mux.HandleFunc("/v1/policies", func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Implement policy CRUD handlers
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"policies":[]}`)
-	})
-
-	// Audit events
-	mux.HandleFunc("/v1/audit/events", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"events":[]}`)
-	})
-
-	return mux
+    cancel()
+    sugar.Info("Stopped")
 }

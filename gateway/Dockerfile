@@ -9,7 +9,7 @@
 #   - USER 65532:65532 (nonroot)
 # =============================================================================
 
-FROM --platform=$BUILDPLATFORM rust:1.80-alpine AS builder
+FROM --platform=$BUILDPLATFORM rust:1.97-alpine AS builder
 WORKDIR /src
 
 # Install musl cross-compilation tools (no openssl-dev needed — using rustls)

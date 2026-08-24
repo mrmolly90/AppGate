@@ -24,8 +24,8 @@ jobs:
       run:
         working-directory: infra/terraform/environments/${{ matrix.env }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.7.0
           terraform_wrapper: false
@@ -37,7 +37,7 @@ jobs:
         continue-on-error: true
       - name: Create drift issue
         if: steps.plan.outputs.exitcode != 0
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

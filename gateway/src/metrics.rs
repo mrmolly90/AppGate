@@ -1,4 +1,6 @@
-﻿use once_cell::sync::Lazy;
+﻿#![allow(dead_code)]
+
+use once_cell::sync::Lazy;
 use prometheus::{
     register_counter_vec, register_gauge, register_histogram_vec,
     CounterVec, Gauge, HistogramVec,

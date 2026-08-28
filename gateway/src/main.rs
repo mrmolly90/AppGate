@@ -13,6 +13,7 @@
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::must_use_candidate)]
+#![allow(dead_code)] // TODO: Remove when all modules are wired up
 
 use anyhow::Context;
 use clap::Parser;

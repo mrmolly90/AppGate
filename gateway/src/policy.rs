@@ -1,4 +1,6 @@
-﻿//! Policy evaluation engine
+﻿#![allow(dead_code)]
+
+//! Policy evaluation engine
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

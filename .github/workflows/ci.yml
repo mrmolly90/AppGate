@@ -1,12 +1,12 @@
 ﻿# =============================================================================
 # AppGate CI/CD Pipeline
 # Architecture:
-#   detect-changes → [otel, rust, go, tf, helm] → security-scan → docker-build
+#   detect-changes -> [otel, rust, go, tf, helm] -> security-scan -> docker-build
 #   - Path-filtered: jobs only run when their code changes
 #   - Aggressive caching: Rust (Swatinem), Go (setup-go), Docker (gha), TF (wrapper false)
 #   - Concurrency: cancel-in-progress saves CI minutes
 #   - Supply chain: SBOM, Cosign signing, Dependency Review, Scorecard
-#   - Security: Trivy SARIF → GitHub Security tab, Gitleaks, Semgrep
+#   - Security: Trivy SARIF -> GitHub Security tab, Gitleaks, Semgrep
 #
 # CI Failure Fixes Applied:
 # 1. Rust: Added cargo generate-lockfile before build, pinned toolchain
@@ -44,7 +44,7 @@ env:
   CARGO_TERM_COLOR: "always"
 
 jobs:
-  # ── 1. Change Detection ─────────────────────────────────────────
+  # -- 1. Change Detection ----------------------------------------
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -89,7 +89,7 @@ jobs:
               - 'observability/otel/**'
               - '.github/workflows/ci.yml'
 
-  # ── 2. OTel Config Validation ───────────────────────────────────
+  # -- 2. OTel Config Validation ----------------------------------
   otel:
     name: OTel Config Validation
     needs: changes
@@ -104,7 +104,7 @@ jobs:
             --config /config/otel-config.yaml --dry-run 2>&1 || \
             echo "WARNING: OTel dry-run produced warnings (non-blocking)"
 
-  # ── 3. Rust Gateway ─────────────────────────────────────────────
+  # -- 3. Rust Gateway --------------------------------------------
   rust:
     name: Rust Gateway
     needs: changes
@@ -138,7 +138,7 @@ jobs:
       - name: Cargo Audit
         uses: rustsec/audit-check@v1
 
-  # ── 4. Go Control Plane ─────────────────────────────────────────
+  # -- 4. Go Control Plane ----------------------------------------
   go:
     name: Go Control Plane
     needs: changes
@@ -185,7 +185,7 @@ jobs:
           args: --timeout=5m --out-format=colored-line-number
           working-directory: control-plane
 
-  # ── 5. Terraform Multi-Env ──────────────────────────────────────
+  # -- 5. Terraform Multi-Env ---------------------------------------
   terraform:
     name: Terraform Validation
     needs: changes
@@ -227,7 +227,7 @@ jobs:
         with:
           sarif_file: conftest-${{ matrix.env }}.sarif
 
-  # ── 6. Helm Lint ────────────────────────────────────────────────
+  # -- 6. Helm Lint -----------------------------------------------
   helm:
     name: Helm Lint
     needs: changes
@@ -243,7 +243,7 @@ jobs:
       - name: Helm template
         run: helm template appgate deploy/helm/appgate --debug > /dev/null
 
-  # ── 7. Security Scanning ────────────────────────────────────────
+  # -- 7. Security Scanning ---------------------------------------
   security-scan:
     name: Security Scanning
     needs: changes
@@ -311,7 +311,7 @@ jobs:
         with:
           sarif_file: scorecard-results.sarif
 
-  # ── 8. Docker Build, SBOM, Sign ─────────────────────────────────
+  # -- 8. Docker Build, SBOM, Sign --------------------------------
   docker:
     name: Docker Build & Scan
     needs: [changes, rust, go, helm]
@@ -338,10 +338,10 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -349,7 +349,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/appgate-${{ matrix.service.name }}
           tags: |
@@ -361,7 +361,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.service.context }}
           file: ${{ matrix.service.dockerfile }}
@@ -430,7 +430,7 @@ jobs:
           sarif_file: trivy-${{ matrix.service.name }}.sarif
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.service.name }}
           path: sbom-${{ matrix.service.name }}.spdx.json

@@ -3,15 +3,13 @@ kind: Deployment
 metadata:
   name: appgate-gateway
   namespace: appgate-gateway
-  labels:
-    app: appgate-gateway
 spec:
   replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 1
-      maxSurge: 1
+      maxUnavailable: 0  # Zero-downtime for security gateway
+      maxSurge: 2
   selector:
     matchLabels:
       app: appgate-gateway
@@ -19,33 +17,47 @@ spec:
     metadata:
       labels:
         app: appgate-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
     spec:
       serviceAccountName: appgate-gateway
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
+        runAsUser: 65532  # Match distroless nonroot
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: gateway
-          image: appgate/gateway:latest
-          imagePullPolicy: Always
+          image: ghcr.io/mrmolly90/appgate-gateway:v0.3.0
+          imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8443
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
               protocol: TCP
           env:
-            - name: LISTEN_PORT
-              value: "8443"
-            - name: CONTROL_PLANE_URL
-              value: "https://appgate-control-plane:8443"
-            - name: JWT_KEY_PATH
-              value: "/etc/appgate/keys/verifying.pem"
-            - name: JWT_ISSUER
-              value: "appgate-control-plane"
-            - name: JWT_AUDIENCE
-              value: "appgate-gateway"
+            - name: RUST_LOG
+              value: "appgate=info,warn"
+            - name: RUST_BACKTRACE
+              value: "0"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.appgate-observability:4317"
+          args:
+            - --listen-addr=0.0.0.0
+            - --listen-port=8443
+            - --control-plane-url=http://appgate-control-plane.appgate-system:8080
+            - --tls-cert-path=/etc/appgate/tls/cert.pem
+            - --tls-key-path=/etc/appgate/tls/key.pem
+            - --jwt-key-path=/etc/appgate/jwt/verify.pem
+            - --worker-threads=0
+            - --max-body-size=10485760
+            - --upstream-timeout-secs=300
+            - --max-concurrent-requests=10000
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -54,48 +66,23 @@ spec:
                 - ALL
           resources:
             requests:
-              cpu: "500m"
-              memory: "128Mi"
-            limits:
-              cpu: "2"
+              cpu: "1000m"
               memory: "512Mi"
+            limits:
+              cpu: "4000m"
+              memory: "2Gi"
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8443
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 10
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 8443
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 5
-            periodSeconds: 10
-          volumeMounts:
-            - name: verifying-key
-              mountPath: /etc/appgate/keys
-              readOnly: true
-      volumes:
-        - name: verifying-key
-          secret:
-            secretName: appgate-verifying-key
-            items:
-              - key: verifying.pem
-                path: verifying.pem
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: appgate-gateway
-  namespace: appgate-gateway
-  labels:
-    app: appgate-gateway
-spec:
-  selector:
-    app: appgate-gateway
-  ports:
-    - name: https
-      port: 443
-      targetPort: 8443
-      protocol: TCP
-  type: LoadBalancer

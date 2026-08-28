@@ -4,6 +4,7 @@ import (
     "context"
     "database/sql"
     "fmt"
+    "net"
     "net/http"
     "os"
     "os/signal"
@@ -14,15 +15,21 @@ import (
     "appgate-control-plane/internal/audit"
     "appgate-control-plane/internal/auth"
     "appgate-control-plane/internal/config"
+    "appgate-control-plane/internal/database"
     "appgate-control-plane/internal/leader"
     "appgate-control-plane/internal/store"
 
     "github.com/gorilla/mux"
     "go.uber.org/zap"
+    "google.golang.org/grpc"
 )
 
 func main() {
-    logger, _ := zap.NewProduction()
+    logger, err := zap.NewProduction()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
+        os.Exit(1)
+    }
     defer logger.Sync()
     sugar := logger.Sugar()
 
@@ -34,31 +41,34 @@ func main() {
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
 
-    // Database (placeholder - no actual connection for now)
-    db, _ := sql.Open("postgres", cfg.DatabaseURL)
-    defer db.Close()
+    var db *sql.DB
+    if cfg.DatabaseURL != "" {
+        pg, err := database.NewPostgres(cfg.DatabaseURL)
+        if err != nil {
+            sugar.Fatalf("Failed to connect to database: %v", err)
+        }
+        defer pg.Close()
+        if err := pg.Migrate(); err != nil {
+            sugar.Fatalf("Failed to run migrations: %v", err)
+        }
+        db = pg.DB()
+    }
 
-    // etcd store
     etcdStore, err := store.NewEtcdStore(ctx, cfg.EtcdEndpoints, 5*time.Second)
     if err != nil {
         sugar.Fatalf("Failed to connect to etcd: %v", err)
     }
     defer etcdStore.Close()
 
-    // Leader election
     elector, err := leader.NewElector(etcdStore.Client(), cfg.LeaderElectionKey, cfg.InstanceID, logger)
     if err != nil {
         sugar.Fatalf("Failed to create leader elector: %v", err)
     }
     go elector.Run(ctx)
 
-    // Auth service
     authService := auth.NewService(cfg, db, sugar)
-
-    // Audit logger
     auditLogger := audit.NewLogger(db, sugar)
 
-    // Router
     router := mux.NewRouter()
     router.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
         w.WriteHeader(http.StatusOK)
@@ -74,7 +84,6 @@ func main() {
         }
     }).Methods("GET")
 
-    // API v1
     apiV1 := router.PathPrefix("/v1").Subrouter()
     apiV1.Use(authService.Middleware())
     apiV1.Use(auditLogger.Middleware())
@@ -99,21 +108,33 @@ func main() {
     apiV1.HandleFunc("/audit/events/export", api.HandleExportAudit(db)).Methods("POST")
     apiV1.HandleFunc("/audit/batch", api.HandleAuditBatch(db)).Methods("POST")
 
-    // Public JWKS
     router.HandleFunc("/.well-known/jwks.json", authService.HandleJWKS).Methods("GET")
 
-    server := &http.Server{
-        Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),
-        Handler:      router,
-        ReadTimeout:  30 * time.Second,
-        WriteTimeout: 30 * time.Second,
-        IdleTimeout:  120 * time.Second,
+    httpServer := &http.Server{
+        Addr:           fmt.Sprintf(":%d", cfg.HTTPPort),
+        Handler:        securityHeaders(router),
+        ReadTimeout:    30 * time.Second,
+        WriteTimeout:   30 * time.Second,
+        IdleTimeout:    120 * time.Second,
+        MaxHeaderBytes: 1 << 20,
     }
 
     go func() {
-        sugar.Infow("Server listening", "port", cfg.HTTPPort)
-        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            sugar.Fatalf("Server error: %v", err)
+        sugar.Infow("HTTP server listening", "port", cfg.HTTPPort)
+        if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            sugar.Fatalf("HTTP server error: %v", err)
+        }
+    }()
+
+    grpcServer := grpc.NewServer()
+    go func() {
+        lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
+        if err != nil {
+            sugar.Fatalf("Failed to listen on gRPC port: %v", err)
+        }
+        sugar.Infow("gRPC server listening", "port", cfg.GRPCPort)
+        if err := grpcServer.Serve(lis); err != nil {
+            sugar.Fatalf("gRPC server error: %v", err)
         }
     }()
 
@@ -125,10 +146,21 @@ func main() {
     shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer shutdownCancel()
 
-    if err := server.Shutdown(shutdownCtx); err != nil {
+    grpcServer.GracefulStop()
+
+    if err := httpServer.Shutdown(shutdownCtx); err != nil {
         sugar.Errorw("Forced shutdown", "error", err)
     }
 
     cancel()
     sugar.Info("Stopped")
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("X-Frame-Options", "DENY")
+        w.Header().Set("Content-Security-Policy", "default-src 'none'")
+        next.ServeHTTP(w, r)
+    })
 }

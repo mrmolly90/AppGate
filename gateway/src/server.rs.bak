@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+﻿use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -43,32 +43,7 @@ pub struct GatewayState {
     pub active_requests: AtomicUsize,
 }
 
-async fn serve_connection<S>(
-    stream: S,
-    peer_addr: SocketAddr,
-    state: Arc<GatewayState>,
-) where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    let io = TokioIo::new(stream);
-    let state2_captured = state.clone();
-    let service = service_fn(move |req: Request<Incoming>| {
-        let state = state2_captured.clone();
-        async move {
-            handle_request(req, state).await
-        }
-    });
-    
-    if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-        if !e.is_incomplete_message() {
-            error!("Connection error from {}: {}", peer_addr, e);
-        }
-    }
-    
-    let _ = state.active_requests.fetch_sub(1, Ordering::Relaxed);
-}
-
-pub async fn run_server(addr: SocketAddr, args: &Args, tls_acceptor: Option<tokio_rustls::TlsAcceptor>) -> anyhow::Result<()> {
+pub async fn run_server(addr: SocketAddr, args: &Args) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await
         .map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
     
@@ -160,21 +135,26 @@ pub async fn run_server(addr: SocketAddr, args: &Args, tls_acceptor: Option<toki
                 let state2 = state.clone();
                 let _ = state2.active_requests.fetch_add(1, Ordering::Relaxed);
                 
-                                if let Some(acceptor) = tls_acceptor.as_ref() {
-                    let acceptor = acceptor.clone();
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        match acceptor.accept(stream).await {
-                            Ok(tls_stream) => serve_connection(tls_stream, peer_addr, state2).await,
-                            Err(e) => warn!("TLS handshake failed for {}: {}", peer_addr, e),
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let io = TokioIo::new(stream);
+                    
+                    let state2_captured = state2.clone();
+let service = service_fn(move |req: Request<Incoming>| {
+                        let state = state2_captured.clone();
+                        async move {
+                            handle_request(req, state).await
                         }
                     });
-                } else {
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        serve_connection(stream, peer_addr, state2).await;
-                    });
-                }
+                    
+                    if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+                        if !e.is_incomplete_message() {
+                            error!("Connection error from {}: {}", peer_addr, e);
+                        }
+                    }
+                    
+                    let _ = state2.active_requests.fetch_sub(1, Ordering::Relaxed);
+                });
             }
             _ = shutdown.notified() => {
                 info!("Shutdown signal received, draining connections...");
@@ -369,9 +349,7 @@ async fn handle_proxy(
 
     // 4. SSRF validation
     let upstream_host = match provider.as_str() {
-        "openai" => "api.openai.com",
-        "openrouter" => "openrouter.ai/api",
-        "groq" => "api.groq.com/openai",
+    "openai" => "api.openai.com",
     "anthropic" => "api.anthropic.com",
     "azure" => "your-resource.openai.azure.com", // change this
     _ => {
@@ -409,22 +387,10 @@ let upstream_url = format!("https://{}/v1/chat/completions", upstream_host);
 
     // 7. Proxy to upstream
     let upstream_start = Instant::now();
-        // Auto-inject model into JSON body using string manipulation
-    let upstream_body = if body_bytes.starts_with(b"{") {
-        let model_json = format!("\"model\":\"{}\",", model);
-        let mut result = Vec::with_capacity(body_bytes.len() + model_json.len());
-        result.push(b'{');
-        result.extend_from_slice(model_json.as_bytes());
-        result.extend_from_slice(&body_bytes[1..]);
-        result
-    } else {
-        body_bytes.to_vec()
-    };
-
     let upstream_resp = match state.http_client.post(&upstream_url)
         .header("Authorization", format!("Bearer {}", token))
         .header("Content-Type", "application/json")
-        .body(upstream_body)
+        .body(body_bytes)
         .send()
         .await
     {
@@ -513,10 +479,4 @@ async fn limited_response_body(resp: reqwest::Response, max_size: usize) -> Resu
     
     Ok(Bytes::from(collected))
 }
-
-
-
-
-
-
 

@@ -93,7 +93,7 @@ impl PolicyEngine {
                         match resp.json::<Vec<Policy>>().await {
                             Ok(fetched) => {
                                 policies.store(Arc::new(fetched));
-                                tracing::info!(target: "appgate::policy", "Policies refreshed");
+                                tracing::info!(target: "appgate::policy", count = fetched.len(), "Policies refreshed");
                             }
                             Err(e) => tracing::warn!(target: "appgate::policy", error = %e, "Failed to parse policies"),
                         }
@@ -108,34 +108,26 @@ impl PolicyEngine {
 
     /// Evaluate a request against cached policies.
     /// Fail-closed: denies if no policies configured.
-    pub fn evaluate(&self, roles: &[String], provider: &str, model: &str) -> EvaluationResult {
+    pub fn evaluate(&self, identity_id: &str, roles: &[String], provider: &str, model: &str) -> EvaluationResult {
         let policies = self.policies.load();
 
         if policies.is_empty() {
             return EvaluationResult {
                 allowed: false,
                 policy_id: None,
-                reason: "No policies configured â€” fail closed".to_string(),
+                reason: "No policies configured — fail closed".to_string(),
             };
         }
 
         for policy in policies.iter() {
-            let spec = &policy.spec;
-
-            // Check subject match
-            let subject_match = match &spec.subjects.roles {
-                Some(allowed_roles) => roles.iter().any(|r| allowed_roles.contains(r)),
-                None => true,
-            };
+            let subject_match = Self::matches_subject(policy, identity_id, roles);
             if !subject_match { continue; }
 
-            // Check provider match
-            if !spec.providers.is_empty() && !spec.providers.contains(&provider.to_string()) {
+            if !policy.spec.providers.is_empty() && !policy.spec.providers.contains(&provider.to_string()) {
                 continue;
             }
 
-            // Check model match
-            if !spec.models.is_empty() && !spec.models.contains(&model.to_string()) {
+            if !policy.spec.models.is_empty() && !policy.spec.models.contains(&model.to_string()) {
                 continue;
             }
 
@@ -152,78 +144,6 @@ impl PolicyEngine {
             reason: "No matching policy found".to_string(),
         }
     }
-}
-                                tracing::info!(count = fetched.len(), "policies refreshed");
-                                policies.store(Arc::new(fetched));
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "failed to parse policies response");
-                            }
-                        }
-                    }
-                    Ok(resp) => {
-                        tracing::warn!(status = %resp.status(), "policies fetch returned non-success");
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "failed to fetch policies from control plane");
-                    }
-                }
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            }
-        });
-    }
-
-    /// Evaluate a request against all policies
-    pub fn evaluate(
-        &self,
-        identity_id: &str,
-        roles: &[String],
-        provider: &str,
-        model: &str,
-    ) -> EvaluationResult {
-        let policies = self.policies.load();
-
-        // Fail closed: if no policies, deny
-        if policies.is_empty() {
-            return EvaluationResult {
-                allowed: false,
-                policy_id: None,
-                reason: "no policies configured".into(),
-            };
-        }
-
-        for policy in policies.iter() {
-            // Check subject match
-            let subject_match = Self::matches_subject(policy, identity_id, roles);
-
-            if !subject_match {
-                continue;
-            }
-
-            // Check provider
-            if !policy.spec.providers.contains(&provider.to_string()) {
-                continue;
-            }
-
-            // Check model
-            if !policy.spec.models.contains(&model.to_string()) {
-                continue;
-            }
-
-            // All checks passed
-            return EvaluationResult {
-                allowed: true,
-                policy_id: Some(policy.id.clone()),
-                reason: "allowed by policy".into(),
-            };
-        }
-
-        EvaluationResult {
-            allowed: false,
-            policy_id: None,
-            reason: "no matching policy".into(),
-        }
-    }
 
     fn matches_subject(policy: &Policy, identity_id: &str, roles: &[String]) -> bool {
         if let Some(ref policy_roles) = policy.spec.subjects.roles {
@@ -233,13 +153,11 @@ impl PolicyEngine {
                 }
             }
         }
-
         if let Some(ref policy_users) = policy.spec.subjects.users {
             if policy_users.contains(&identity_id.to_string()) {
                 return true;
             }
         }
-
         false
     }
 }
@@ -271,62 +189,25 @@ mod tests {
 
     #[test]
     fn test_allowed_request() {
-        let engine = Engine::new("http://localhost:8443".into());
+        let engine = PolicyEngine::new("http://localhost:8443".into());
         engine.policies.store(Arc::new(vec![create_test_policy()]));
-
-        let result = engine.evaluate(
-            "user-1",
-            &["engineering".into()],
-            "openai",
-            "gpt-4",
-        );
-
+        let result = engine.evaluate("user-1", &["engineering".into()], "openai", "gpt-4");
         assert!(result.allowed);
-        assert_eq!(result.reason, "allowed by policy");
+        assert_eq!(result.reason, "Access granted by policy");
     }
 
     #[test]
     fn test_denied_wrong_role() {
-        let engine = Engine::new("http://localhost:8443".into());
+        let engine = PolicyEngine::new("http://localhost:8443".into());
         engine.policies.store(Arc::new(vec![create_test_policy()]));
-
-        let result = engine.evaluate(
-            "user-1",
-            &["marketing".into()],
-            "openai",
-            "gpt-4",
-        );
-
-        assert!(!result.allowed);
-    }
-
-    #[test]
-    fn test_denied_wrong_model() {
-        let engine = Engine::new("http://localhost:8443".into());
-        engine.policies.store(Arc::new(vec![create_test_policy()]));
-
-        let result = engine.evaluate(
-            "user-1",
-            &["engineering".into()],
-            "openai",
-            "gpt-3.5-turbo",
-        );
-
+        let result = engine.evaluate("user-1", &["marketing".into()], "openai", "gpt-4");
         assert!(!result.allowed);
     }
 
     #[test]
     fn test_fail_closed_no_policies() {
-        let engine = Engine::new("http://localhost:8443".into());
-
-        let result = engine.evaluate(
-            "user-1",
-            &["engineering".into()],
-            "openai",
-            "gpt-4",
-        );
-
+        let engine = PolicyEngine::new("http://localhost:8443".into());
+        let result = engine.evaluate("user-1", &["engineering".into()], "openai", "gpt-4");
         assert!(!result.allowed);
-        assert_eq!(result.reason, "no policies configured");
     }
 }

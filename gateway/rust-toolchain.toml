@@ -1,8 +1,2 @@
-[toolchain]
-channel = "1.80.0"
-components = ["rustfmt", "clippy", "rust-src"]
-targets = [
-    "x86_64-unknown-linux-musl",
-    "aarch64-unknown-linux-musl",
-]
-profile = "minimal"
+﻿[toolchain]
+channel = "stable"

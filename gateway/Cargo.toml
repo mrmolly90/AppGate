@@ -1,118 +1,62 @@
 [package]
 name = "appgate-gateway"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "AppGate SDP Gateway — High-performance async Rust zero-trust security gateway"
-authors = ["AppGate Team"]
-license = "Apache-2.0"
-repository = "https://github.com/mrmolly90/AppGate"
 rust-version = "1.80"
 
-# =============================================================================
-# Feature Flags — Compile-time component selection
-# =============================================================================
 [features]
 default = ["full"]
-full = [
-    "tls",
-    "otel",
-    "metrics",
-    "ratelimit",
-    "policy-engine",
-    "ssrf-protection",
-    "audit",
-    "jwt-auth",
-    "connection-pooling",
-]
+full = ["tls", "otel", "metrics", "ratelimit", "policy-engine", "ssrf-protection", "audit", "jwt-auth"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 metrics = ["dep:prometheus"]
-ratelimit = ["dep:governor"]
+ratelimit = ["dep:governor", "dep:moka"]
 policy-engine = []
 ssrf-protection = []
-audit = []
-jwt-auth = ["dep:jsonwebtoken", "dep:rsa"]
-connection-pooling = ["dep:deadpool"]
-minimal = []
+audit = ["dep:tokio-util"]
+jwt-auth = ["dep:jsonwebtoken"]
 
 [dependencies]
-# ── Async Runtime ─────────────────────────────────────────────────
-tokio = { version = "1.40", features = [
-    "full",
-    "net",
-    "rt-multi-thread",
-    "sync",
-    "signal",
-    "process",
-    "tracing",
-] }
-
-# ── HTTP / Proxy ──────────────────────────────────────────────────
-hyper = { version = "1.5", features = [
-    "server",
-    "client",
-    "http1",
-    "http2",
-    "runtime",
-    "backtrace",
-] }
-hyper-util = { version = "0.1", features = [
-    "server",
-    "client",
-    "tokio",
-] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+chrono = { version = "0.4", features = ["serde"] }
+blake3 = "1.5"
+once_cell = "1"
+tokio = { version = "1.40", features = ["full"] }
+axum = { version = "0.7", features = ["http2", "macros", "tracing"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = { version = "0.5", features = ["limit", "load-shed", "timeout"] }
+tower-http = { version = "0.6", features = ["trace", "timeout", "limit", "compression-full", "cors", "request-id", "auth"] }
+hyper = { version = "1.5", features = ["full"] }
+hyper-util = { version = "0.1", features = ["client", "http2", "tokio"] }
 http-body-util = "0.1"
 bytes = "1.7"
-
-# ── TLS (rustls — no OpenSSL) ─────────────────────────────────────
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonwebtoken = { version = "9", optional = true }
+governor = { version = "0.7", optional = true }
+moka = { version = "0.12", features = ["future"], optional = true }  # For distributed rate limit caching
 rustls = { version = "0.23", optional = true, features = ["ring", "tls12"] }
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }
-
-# ── Serialization ─────────────────────────────────────────────────
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-# ── JWT Auth ──────────────────────────────────────────────────────
-jsonwebtoken = { version = "9", optional = true }
-rsa = { version = "0.9", optional = true }
-
-# ── Rate Limiting ─────────────────────────────────────────────────
-governor = { version = "0.7", optional = true }
-
-# ── Connection Pooling ────────────────────────────────────────────
-deadpool = { version = "0.12", optional = true }
-
-# ── Observability ─────────────────────────────────────────────────
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = [
-    "env-filter",
-    "json",
-    "registry",
-] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = { version = "0.28", optional = true }
-opentelemetry = { version = "0.28", optional = true, features = ["metrics", "trace"] }
-opentelemetry_sdk = { version = "0.28", optional = true, features = ["rt-tokio", "metrics"] }
+opentelemetry = { version = "0.28", optional = true }
+opentelemetry_sdk = { version = "0.28", optional = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.28", optional = true, features = ["grpc-tonic"] }
 prometheus = { version = "0.14", optional = true }
-
-# ── Concurrency ───────────────────────────────────────────────────
 dashmap = "6"
 parking_lot = "0.12"
 arc-swap = "1"
-
-# ── CLI & Config ──────────────────────────────────────────────────
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 thiserror = "2"
-
-# ── Networking ────────────────────────────────────────────────────
 hickory-resolver = "0.24"
 url = "2"
-
-# ── Utilities ─────────────────────────────────────────────────────
 uuid = { version = "1", features = ["v4"] }
-once_cell = "1"
+reqwest = { version = "0.12", features = ["json", "http2", "stream", "rustls-tls"], default-features = false }
+tokio-util = { version = "0.7", optional = true, features = ["codec"] }
+futures = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -125,17 +69,3 @@ codegen-units = 1
 opt-level = 3
 strip = "symbols"
 panic = "abort"
-
-[profile.release.build-override]
-opt-level = 0
-codegen-units = 16
-
-[profile.bench]
-debug = 1
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-
-[[bench]]
-name = "throughput"
-harness = false

@@ -1,7 +1,6 @@
 //! Gateway configuration
 
 use std::path::PathBuf;
-
 use crate::Args;
 
 /// Gateway configuration

@@ -64,12 +64,6 @@ async fn main() -> anyhow::Result<()> {
         telemetry::init_telemetry(&args.otlp_endpoint)?;
     }
     
-    let tls_acceptor = if !args.tls_cert_path.is_empty() && !args.tls_key_path.is_empty() {
-    Some(tls::load_tls_config(&args.tls_cert_path, &args.tls_key_path).await?)
-} else {
-    None
-};
-
-server::run_server(args.listen, &args, tls_acceptor).await?;
+    server::run_server(args.listen, &args).await?;
     Ok(())
 }

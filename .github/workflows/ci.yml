@@ -57,8 +57,8 @@ jobs:
       security: ${{ steps.filter.outputs.security }}
       otel: ${{ steps.filter.outputs.otel }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
@@ -96,7 +96,7 @@ jobs:
     if: ${{ needs.changes.outputs.otel == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Validate OTel config
         run: |
           docker run --rm -v ${{ github.workspace }}/observability/otel:/config \
@@ -114,8 +114,8 @@ jobs:
       run:
         working-directory: gateway
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy, rustfmt, rust-src
@@ -136,7 +136,7 @@ jobs:
       - name: Build (musl, release)
         run: cargo build --release --target x86_64-unknown-linux-musl --locked
       - name: Cargo Audit
-        uses: actions-rust-lang/rust-audit@v1
+        uses: rustsec/audit-check@v1
 
   # ── 4. Go Control Plane ─────────────────────────────────────────
   go:
@@ -148,15 +148,15 @@ jobs:
       run:
         working-directory: control-plane
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: control-plane/go.sum
       - name: Go module cache
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: |
             ~/go/pkg/mod
@@ -179,7 +179,7 @@ jobs:
       - name: Test (race detection)
         run: go test ./... -race -shuffle=on -count=1 -timeout=60s
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=5m --out-format=colored-line-number
@@ -199,8 +199,8 @@ jobs:
       run:
         working-directory: infra/terraform/environments/${{ matrix.env }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: hashicorp/setup-terraform@v4
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
@@ -211,7 +211,7 @@ jobs:
       - name: Terraform validate
         run: terraform validate -no-color
       - name: Checkov IaC Scan
-        uses: bridgecrewio/checkov-action@master
+        uses: bridgecrewio/checkov-action@v12
         with:
           directory: infra/terraform
           framework: terraform
@@ -223,7 +223,7 @@ jobs:
           policy: infra/terraform/policy
       - name: Upload Conftest results
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: conftest-${{ matrix.env }}.sarif
 
@@ -234,8 +234,8 @@ jobs:
     if: ${{ needs.changes.outputs.helm == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: azure/setup-helm@v5
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
         with:
           version: latest
       - name: Helm lint (strict)
@@ -250,17 +250,17 @@ jobs:
     if: ${{ needs.changes.outputs.security == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Gitleaks (secret detection)
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trivy FS Scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.29.0
         with:
           scan-type: fs
           scan-ref: .
@@ -278,18 +278,18 @@ jobs:
 
       - name: Upload Trivy FS results
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-fs.sarif
 
       - name: Dependency Review
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v5
+        uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
 
       - name: Semgrep
-        uses: semgrep/semgrep-action@v1
+        uses: returntocorp/semgrep-action@v1
         with:
           config: auto
           audit_on: push
@@ -307,7 +307,7 @@ jobs:
 
       - name: Upload Scorecard results
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: scorecard-results.sarif
 
@@ -333,7 +333,7 @@ jobs:
             dockerfile: gateway/Dockerfile
             platforms: linux/amd64,linux/arm64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -413,7 +413,7 @@ jobs:
             "${IMAGE}@${DIGEST}"
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.29.0
         with:
           image-ref: ${{ steps.meta.outputs.tags }}
           format: sarif
@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-${{ matrix.service.name }}.sarif
 

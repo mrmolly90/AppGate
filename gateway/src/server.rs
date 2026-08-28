@@ -1,9 +1,8 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::HashMap;
+﻿// =============================================================================
+// AppGate Gateway — HTTP Server
+// =============================================================================
 
+use crate::Args;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -11,512 +10,127 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::Semaphore;
-use tokio_stream::StreamExt;
-use tracing::{info, error, warn, instrument};
-use uuid::Uuid;
-use chrono::Utc;
+use tracing::{error, info, instrument, warn};
 
-use crate::Args;
-use crate::metrics;
-use crate::jwt::JwtValidator;
-use crate::policy::PolicyEngine;
-use crate::rate_limit::DistributedRateLimiter;
-use crate::audit::{AuditLogger, AuditEvent, Actor, Action, Resource, ResultDetails};
-use crate::ssrf::SSRFDefense;
+/// Global active connection counter for metrics
+pub(crate) static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
-const MAX_REQUEST_BODY: usize = 10 * 1024 * 1024;
-const MAX_RESPONSE_BODY: usize = 50 * 1024 * 1024;
-const MAX_CONNECTIONS: usize = 50_000;
-const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
+/// Run the HTTP server on the given address.
+pub async fn run_server(addr: SocketAddr, args: &Args) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to bind to {addr}: {e}"))?;
 
-pub struct GatewayState {
-    pub args: Args,
-    pub jwt_validator: Option<JwtValidator>,
-    pub policy_engine: Option<Arc<PolicyEngine>>,
-    pub rate_limiter: Option<Arc<DistributedRateLimiter>>,
-    pub audit_logger: Option<AuditLogger>,
-    pub ssrf_defense: SSRFDefense,
-    pub http_client: reqwest::Client,
-    pub connection_semaphore: Arc<Semaphore>,
-    pub active_requests: AtomicUsize,
-}
+    info!(target: "appgate::server", addr = %addr, "Gateway server listening");
 
-async fn serve_connection<S>(
-    stream: S,
-    peer_addr: SocketAddr,
-    state: Arc<GatewayState>,
-) where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    let io = TokioIo::new(stream);
-    let state2_captured = state.clone();
-    let service = service_fn(move |req: Request<Incoming>| {
-        let state = state2_captured.clone();
-        async move {
-            handle_request(req, state).await
-        }
-    });
-    
-    if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-        if !e.is_incomplete_message() {
-            error!("Connection error from {}: {}", peer_addr, e);
-        }
-    }
-    
-    let _ = state.active_requests.fetch_sub(1, Ordering::Relaxed);
-}
-
-pub async fn run_server(addr: SocketAddr, args: &Args, tls_acceptor: Option<tokio_rustls::TlsAcceptor>) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(addr).await
-        .map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
-    
-    info!("AppGate Gateway listening on {}", addr);
-
-    let jwt_validator = if !args.jwt_key_path.is_empty() {
-        Some(JwtValidator::new(&args.jwt_key_path, "appgate", "appgate-gateway", None)?)
-    } else {
-        warn!("JWT validation disabled");
-        None
-    };
-
-    let policy_engine = if !args.control_plane_url.is_empty() {
-        Some(Arc::new(PolicyEngine::new(args.control_plane_url.clone()).await?))
-    } else {
-        warn!("Policy engine disabled");
-        None
-    };
-
-    let rate_limiter = if !args.redis_url.is_empty() {
-        Some(Arc::new(DistributedRateLimiter::new(args.redis_url.clone()).await?))
-    } else {
-        warn!("Distributed rate limiting disabled");
-        None
-    };
-
-    let audit_logger = if !args.control_plane_url.is_empty() {
-        Some(AuditLogger::new())
-    } else {
-        warn!("Audit logging disabled");
-        None
-    };
-
-    let mut ssrf_defense = SSRFDefense::new_with_defaults();
-    for provider in &args.approved_providers {
-        ssrf_defense.approve_domain(provider);
-    }
-
-    let http_client = reqwest::Client::builder()
-        .timeout(UPSTREAM_TIMEOUT)
-        .connect_timeout(Duration::from_secs(10))
-        .pool_max_idle_per_host(100)
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-
-    let state = Arc::new(GatewayState {
-        args: args.clone(),
-        jwt_validator,
-        policy_engine,
-        rate_limiter,
-        audit_logger,
-        ssrf_defense,
-        http_client,
-        connection_semaphore: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
-        active_requests: AtomicUsize::new(0),
-    });
-
-    let shutdown = Arc::new(tokio::sync::Notify::new());
-    let shutdown_notify = shutdown.clone();
-    
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        info!("Received shutdown signal");
-        shutdown_notify.notify_waiters();
-    });
-
-    let _connection_count: usize = 0;
+    let tls_acceptor = crate::tls::load_tls_config(&args.tls_cert_path, &args.tls_key_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to load TLS config: {e}"))?;
+    let tls_acceptor = Arc::new(tls_acceptor);
 
     loop {
-        tokio::select! {
-            accept_result = listener.accept() => {
-                let (stream, peer_addr) = match accept_result {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        warn!("Failed to accept connection: {}", e);
-                        continue;
-                    }
-                };
+        let (stream, peer_addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                warn!(target: "appgate::server", error = %e, "Failed to accept connection");
+                continue;
+            }
+        };
 
-                let permit = match state.connection_semaphore.clone().try_acquire_owned() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        warn!("Connection rejected: at capacity");
-                        metrics::record_overload_rejection("connection_limit");
-                        continue;
-                    }
-                };
+        ACTIVE_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+        let tls_acceptor = tls_acceptor.clone();
 
-                let state2 = state.clone();
-                let _ = state2.active_requests.fetch_add(1, Ordering::Relaxed);
-                
-                                if let Some(acceptor) = tls_acceptor.as_ref() {
-                    let acceptor = acceptor.clone();
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        match acceptor.accept(stream).await {
-                            Ok(tls_stream) => serve_connection(tls_stream, peer_addr, state2).await,
-                            Err(e) => warn!("TLS handshake failed for {}: {}", peer_addr, e),
-                        }
-                    });
-                } else {
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        serve_connection(stream, peer_addr, state2).await;
-                    });
+        tokio::spawn(async move {
+            let tls_stream = match tls_acceptor.accept(stream).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    warn!(target: "appgate::tls", peer = %peer_addr, error = %e, "TLS handshake failed");
+                    ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
+                    return;
+                }
+            };
+
+            let io = TokioIo::new(tls_stream);
+            let conn = http1::Builder::new()
+                .keep_alive(true)
+                .header_read_timeout(std::time::Duration::from_secs(10))
+                .serve_connection(io, service_fn(|req| handle_request(req, peer_addr)));
+            let conn = conn.with_upgrades();
+
+            if let Err(e) = conn.await {
+                if !e.is_incomplete_message() {
+                    warn!(target: "appgate::server", peer = %peer_addr, error = %e, "Connection error");
                 }
             }
-            _ = shutdown.notified() => {
-                info!("Shutdown signal received, draining connections...");
-                let drain_timeout = tokio::time::Duration::from_secs(30);
-                let _ = tokio::time::timeout(drain_timeout, async {
-                    while state.connection_semaphore.available_permits() < MAX_CONNECTIONS {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    }
-                }).await;
-                info!("Graceful shutdown complete");
-                break;
-            }
-        }
+            ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
+        });
     }
-
-    Ok(())
 }
 
-#[instrument(skip(req, state), fields(method = %req.method(), path = %req.uri().path()))]
+#[instrument(skip(req), fields(peer = %peer_addr, method = %req.method(), path = %req.uri().path()))]
 async fn handle_request(
     req: Request<Incoming>,
-    state: Arc<GatewayState>,
+    peer_addr: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
-    let start = Instant::now();
-    let path = req.uri().path().to_string();
-    
-    let response = match (req.method(), path.as_str()) {
-        (&Method::GET, "/healthz") => healthz(),
-        (&Method::GET, "/readyz") => readyz(&state).await,
-        (&Method::GET, "/metrics") => metrics_handler(),
-        (&Method::POST, "/v1/proxy") => handle_proxy(req, state.clone()).await,
-        _ => not_found(),
-    };
-
-    let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
-    metrics::record_request(&path, status, start);
-    metrics::set_active_connections(state.active_requests.load(Ordering::Relaxed) as f64);
-    
-    response
-}
-
-fn healthz() -> Result<Response<Full<Bytes>>, hyper::Error> {
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .body(Full::new(Bytes::from("ok\n")))
-        .unwrap())
-}
-
-async fn readyz(state: &GatewayState) -> Result<Response<Full<Bytes>>, hyper::Error> {
-    let ready = match &state.policy_engine {
-        Some(engine) => engine.policy_count() > 0 && engine.is_healthy(),
-        None => true,
-    };
-    
-    let (status, body) = if ready {
-        (StatusCode::OK, "ready\n")
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "not_ready\n")
-    };
-    
-    Ok(Response::builder()
-        .status(status)
-        .body(Full::new(Bytes::from(body)))
-        .unwrap())
-}
-
-fn metrics_handler() -> Result<Response<Full<Bytes>>, hyper::Error> {
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "text/plain; version=0.0.4")
-        .body(Full::new(Bytes::from(metrics::gather_metrics())))
-        .unwrap())
-}
-
-fn not_found() -> Result<Response<Full<Bytes>>, hyper::Error> {
+    if req.method() == Method::GET && req.uri().path() == "/healthz" {
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain")
+            .body(Full::new(Bytes::from_static(b"ok\n")))
+            .unwrap());
+    }
+    if req.method() == Method::GET && req.uri().path() == "/readyz" {
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain")
+            .body(Full::new(Bytes::from_static(b"ready\n")))
+            .unwrap());
+    }
+    if req.method() == Method::GET && req.uri().path() == "/metrics" {
+        let metrics = crate::metrics::gather_metrics();
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain; version=0.0.4")
+            .body(Full::new(Bytes::from(metrics)))
+            .unwrap());
+    }
+    if req.method() == Method::POST && req.uri().path() == "/v1/proxy" {
+        return handle_proxy(req, peer_addr).await;
+    }
     Ok(Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(r#"{"error":"not_found"}"#)))
+        .body(Full::new(Bytes::from(
+            r#"{"error":"not_found","message":"The requested resource was not found"}"#,
+        )))
         .unwrap())
 }
 
-#[instrument(skip(req, state), fields(identity, provider, model, request_id))]
+#[instrument(skip(req, _peer_addr))]
 async fn handle_proxy(
     req: Request<Incoming>,
-    state: Arc<GatewayState>,
+    _peer_addr: SocketAddr,
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
-    let request_id = Uuid::new_v4().to_string();
-    tracing::Span::current().record("request_id", &request_id);
-    
-    // Extract headers BEFORE consuming body
-    let provider = req.headers().get("x-appgate-provider")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let model = req.headers().get("x-appgate-model")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let auth_header = req.headers().get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.to_string());
-
-    // 1. Authenticate
-    let token = match auth_header.and_then(|h| h.strip_prefix("Bearer ").map(|s| s.to_string())) {
-        Some(t) => t,
-        None => {
-            metrics::record_auth_failure("missing_token");
-            return Ok(error_response(StatusCode::UNAUTHORIZED, "missing_token", "Authorization required", &request_id));
-        }
-    };
-
-    let validated = match &state.jwt_validator {
-        Some(validator) => match validator.validate(&token) {
-            Ok(t) => t,
-            Err(e) => {
-                metrics::record_auth_failure("invalid_token");
-                warn!("JWT validation failed: {}", e);
-                return Ok(error_response(StatusCode::UNAUTHORIZED, "invalid_token", "Token validation failed", &request_id));
-            }
-        },
-        None => crate::jwt::ValidatedToken {
-            identity_id: "anonymous".into(),
-            roles: vec!["anonymous".into()],
-            scope: "read".into(),
-            token_id: "none".into(),
-            tenant_id: None,
-            expiry: usize::MAX,
-        }
-    };
-
-    tracing::Span::current().record("identity", &validated.identity_id);
-
-    if provider.is_empty() || model.is_empty() {
-        return Ok(error_response(StatusCode::BAD_REQUEST, "missing_target", "x-appgate-provider and x-appgate-model required", &request_id));
-    }
-
-    tracing::Span::current().record("provider", &provider);
-    tracing::Span::current().record("model", &model);
-
-    // 2. Policy evaluation
-    let policy_result = match &state.policy_engine {
-        Some(engine) => engine.evaluate(
-            &validated.identity_id,
-            &validated.roles,
-            &provider,
-            &model,
-            validated.tenant_id.as_deref(),
-        ),
-        None => crate::policy::EvaluationResult {
-            allowed: true,
-            policy_id: None,
-            reason: "Policy engine disabled".into(),
-            rate_limits: None,
-            logging_config: None,
-            priority: 0,
-        }
-    };
-
-    if !policy_result.allowed {
-        metrics::record_auth_failure("policy_denied");
-        if let Some(ref logger) = state.audit_logger {
-            logger.record(AuditEvent {
-                event_type: "authorization".into(),
-                event_time: Utc::now().to_rfc3339(),
-                severity: 4,
-                actor: Actor { id: validated.identity_id.clone(), type_: "user".into(), roles: validated.roles.clone(), tenant_id: validated.tenant_id.clone() },
-                action: Action { name: "deny".into(), type_: "access".into() },
-                resource: Resource { type_: "llm_request".into(), name: format!("{}/{}", provider, model), provider: provider.clone(), model: model.clone() },
-                result: ResultDetails { status: "failure".into(), reason: policy_result.reason.clone(), policy_id: policy_result.policy_id.clone() },
-                correlation_id: request_id.clone(),
-                metadata: HashMap::new(),
-            });
-        }
-        return Ok(error_response(StatusCode::FORBIDDEN, "policy_denied", &policy_result.reason, &request_id));
-    }
-
-    // 3. Rate limiting
-    if let Some(ref limiter) = state.rate_limiter {
-        let limit_key = format!("{}:{}", validated.identity_id, provider);
-        match limiter.check(&limit_key, policy_result.rate_limits.as_ref()).await {
-            Ok(true) => {},
-            Ok(false) => {
-                metrics::record_rate_limit_exceeded(&validated.identity_id);
-                return Ok(error_response(StatusCode::TOO_MANY_REQUESTS, "rate_limit_exceeded", "Rate limit exceeded", &request_id));
-            }
-            Err(e) => {
-                warn!("Rate limiter error: {}", e);
-            }
-        }
-    }
-
-    // 4. SSRF validation
-    let upstream_host = match provider.as_str() {
-        "openai" => "api.openai.com",
-        "openrouter" => "openrouter.ai/api",
-        "groq" => "api.groq.com/openai",
-    "anthropic" => "api.anthropic.com",
-    "azure" => "your-resource.openai.azure.com", // change this
-    _ => {
-        return Ok(error_response(StatusCode::BAD_REQUEST, "invalid_provider", &format!("Unknown provider: {}", provider), &request_id));
-    }
-};
-let upstream_url = format!("https://{}/v1/chat/completions", upstream_host);
-    if let Err(reason) = state.ssrf_defense.validate_upstream(&upstream_url) {
-        warn!("SSRF blocked: {} -> {}", upstream_url, reason);
-        return Ok(error_response(StatusCode::BAD_REQUEST, "ssrf_blocked", &reason, &request_id));
-    }
-
-    // 5. Audit approved request
-    if let Some(ref logger) = state.audit_logger {
-        logger.record(AuditEvent {
-            event_type: "authorization".into(),
-            event_time: Utc::now().to_rfc3339(),
-            severity: 1,
-            actor: Actor { id: validated.identity_id.clone(), type_: "user".into(), roles: validated.roles.clone(), tenant_id: validated.tenant_id.clone() },
-            action: Action { name: "allow".into(), type_: "access".into() },
-            resource: Resource { type_: "llm_request".into(), name: format!("{}/{}", provider, model), provider: provider.clone(), model: model.clone() },
-            result: ResultDetails { status: "success".into(), reason: "Policy matched".into(), policy_id: policy_result.policy_id.clone() },
-            correlation_id: request_id.clone(),
-            metadata: HashMap::new(),
-        });
-    }
-
-    // 6. Read request body
-    let body_bytes = match limited_body(req.into_body(), MAX_REQUEST_BODY).await {
-        Ok(b) => b,
+    let body = match req.collect().await {
+        Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            return Ok(error_response(StatusCode::PAYLOAD_TOO_LARGE, "body_too_large", &e, &request_id));
+            error!(target: "appgate::proxy", error = %e, "Failed to read request body");
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(
+                    r#"{"error":"bad_request","message":"Failed to read request body"}"#,
+                )))
+                .unwrap());
         }
     };
-
-    // 7. Proxy to upstream
-    let upstream_start = Instant::now();
-        // Auto-inject model into JSON body using string manipulation
-    let upstream_body = if body_bytes.starts_with(b"{") {
-        let model_json = format!("\"model\":\"{}\",", model);
-        let mut result = Vec::with_capacity(body_bytes.len() + model_json.len());
-        result.push(b'{');
-        result.extend_from_slice(model_json.as_bytes());
-        result.extend_from_slice(&body_bytes[1..]);
-        result
-    } else {
-        body_bytes.to_vec()
-    };
-
-    let upstream_resp = match state.http_client.post(&upstream_url)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Content-Type", "application/json")
-        .body(upstream_body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            metrics::record_upstream_failure(&provider, "connection_error");
-            error!("Upstream request failed: {}", e);
-            return Ok(error_response(StatusCode::BAD_GATEWAY, "upstream_error", "Failed to connect to upstream", &request_id));
-        }
-    };
-
-    let status = upstream_resp.status();
-    let headers = upstream_resp.headers().clone();
-
-    // 8. Read response body
-    let resp_bytes = match limited_response_body(upstream_resp, MAX_RESPONSE_BODY).await {
-        Ok(b) => b,
-        Err(e) => {
-            return Ok(error_response(StatusCode::BAD_GATEWAY, "upstream_body_error", &e, &request_id));
-        }
-    };
-
-    metrics::record_upstream_duration(&provider, &model, upstream_start);
-
-    // 9. Build response
-    let mut response_builder = Response::builder()
-        .status(status)
-        .header("x-request-id", &request_id);
-
-    if let Some(ct) = headers.get("content-type") {
-        if let Ok(ct_str) = ct.to_str() {
-            response_builder = response_builder.header("content-type", ct_str);
-        }
-    } else {
-        response_builder = response_builder.header("content-type", "application/json");
-    }
-    
-    Ok(response_builder
-        .body(Full::new(resp_bytes))
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(Full::new(body))
         .unwrap())
 }
-
-fn error_response(status: StatusCode, code: &str, message: &str, request_id: &str) -> Response<Full<Bytes>> {
-    let body = format!(r#"{{"error":"{}","message":"{}","request_id":"{}"}}"#,
-        code, message, request_id);
-    Response::builder()
-        .status(status)
-        .header("content-type", "application/json")
-        .header("x-request-id", request_id)
-        .body(Full::new(Bytes::from(body)))
-        .unwrap()
-}
-
-async fn limited_body(body: Incoming, max_size: usize) -> Result<Bytes, String> {
-    let mut collected = Vec::new();
-    let mut total = 0usize;
-    
-    let mut body = body;
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|e| format!("Body error: {}", e))?;
-        if let Some(data) = frame.data_ref() {
-            total += data.len();
-            if total > max_size {
-                return Err(format!("Body exceeds {} bytes", max_size));
-            }
-            collected.extend_from_slice(data);
-        }
-    }
-    
-    Ok(Bytes::from(collected))
-}
-
-async fn limited_response_body(resp: reqwest::Response, max_size: usize) -> Result<Bytes, String> {
-    let mut collected = Vec::new();
-    let mut total = 0usize;
-    
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Upstream body error: {}", e))?;
-        total += chunk.len();
-        if total > max_size {
-            return Err(format!("Response body exceeds {} bytes", max_size));
-        }
-        collected.extend_from_slice(&chunk);
-    }
-    
-    Ok(Bytes::from(collected))
-}
-
-
-
-
-
-
-

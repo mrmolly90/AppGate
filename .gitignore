@@ -42,3 +42,15 @@ deploy/helm/**/*.lock
 
 # Docker
 .docker/
+# Security & Build artifacts
+node_modules/
+*.log
+*.exe
+*.dll
+*.so
+control-plane/bin/
+gateway/target/
+*.sarif
+conftest-*.sarif
+.env
+.env.local

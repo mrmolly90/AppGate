@@ -38,7 +38,7 @@ func NewEtcdStore(ctx context.Context, endpoints []string, dialTimeout time.Dura
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 
-	if _, err := cli.Get(ctx, "/appgate/health"); err != nil {
+	if _, err := cli.Status(ctx, endpoints[0]); err != nil {
 		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
 	}
 

@@ -1,15 +1,12 @@
-//! Policy evaluation engine
-//!
-//! Evaluates whether a request is allowed based on the configured policies.
-//! Policies are fetched from the control plane and cached locally.
+ï»¿//! Policy evaluation engine
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 
-/// Policy definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     pub id: String,
@@ -17,7 +14,6 @@ pub struct Policy {
     pub spec: PolicySpec,
 }
 
-/// Policy specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicySpec {
     pub subjects: SubjectSelector,
@@ -27,26 +23,22 @@ pub struct PolicySpec {
     pub logging: LoggingConfig,
 }
 
-/// Subject selector
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectSelector {
     pub roles: Option<Vec<String>>,
     pub users: Option<Vec<String>>,
 }
 
-/// Rate limits
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimits {
     pub requests_per_minute: u32,
 }
 
-/// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
     pub metadata_only: bool,
 }
 
-/// Policy evaluation result
 #[derive(Debug, Clone)]
 pub struct EvaluationResult {
     pub allowed: bool,
@@ -54,11 +46,11 @@ pub struct EvaluationResult {
     pub reason: String,
 }
 
-/// Policy engine that evaluates requests against policies
 pub struct PolicyEngine {
-    policies: ArcSwap<Vec<Policy>>,
+    policies: Arc<ArcSwap<Vec<Policy>>>,
     control_plane_url: String,
     client: reqwest::Client,
+    healthy: Arc<AtomicBool>,
 }
 
 impl PolicyEngine {
@@ -72,19 +64,29 @@ impl PolicyEngine {
             });
 
         let engine = Self {
-            policies: ArcSwap::new(Arc::new(Vec::new())),
+            policies: Arc::new(ArcSwap::new(Arc::new(Vec::new()))),
             control_plane_url,
             client,
+            healthy: Arc::new(AtomicBool::new(true)),
         };
 
         engine.start_policy_refresh();
         engine
     }
 
+    pub fn policy_count(&self) -> usize {
+        self.policies.load().len()
+    }
+
+    pub fn is_healthy(&self) -> bool {
+        self.healthy.load(Ordering::Relaxed)
+    }
+
     fn start_policy_refresh(&self) {
         let url = format!("{}/v1/policies", self.control_plane_url.trim_end_matches('/'));
         let client = self.client.clone();
-        let policies = self.policies.clone();
+        let policies = Arc::clone(&self.policies);
+        let healthy = Arc::clone(&self.healthy);
 
         tokio::spawn(async move {
             loop {
@@ -92,22 +94,25 @@ impl PolicyEngine {
                     Ok(resp) if resp.status().is_success() => {
                         match resp.json::<Vec<Policy>>().await {
                             Ok(fetched) => {
+                                let count = fetched.len();
                                 policies.store(Arc::new(fetched));
-                                tracing::info!(target: "appgate::policy", count = fetched.len(), "Policies refreshed");
+                                tracing::info!(target: "appgate::policy", count = count, "Policies refreshed");
+                                healthy.store(true, Ordering::Relaxed);
                             }
                             Err(e) => tracing::warn!(target: "appgate::policy", error = %e, "Failed to parse policies"),
                         }
                     }
                     Ok(resp) => tracing::warn!(target: "appgate::policy", status = %resp.status(), "Policy fetch returned non-success"),
-                    Err(e) => tracing::warn!(target: "appgate::policy", error = %e, "Failed to fetch policies"),
+                    Err(e) => {
+                        tracing::warn!(target: "appgate::policy", error = %e, "Failed to fetch policies");
+                        healthy.store(false, Ordering::Relaxed);
+                    }
                 }
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
         });
     }
 
-    /// Evaluate a request against cached policies.
-    /// Fail-closed: denies if no policies configured.
     pub fn evaluate(&self, identity_id: &str, roles: &[String], provider: &str, model: &str) -> EvaluationResult {
         let policies = self.policies.load();
 
@@ -115,7 +120,7 @@ impl PolicyEngine {
             return EvaluationResult {
                 allowed: false,
                 policy_id: None,
-                reason: "No policies configured — fail closed".to_string(),
+                reason: "No policies configured - fail closed".to_string(),
             };
         }
 
@@ -190,7 +195,6 @@ mod tests {
     #[test]
     fn test_allowed_request() {
         let engine = PolicyEngine::new("http://localhost:8443".into());
-        engine.policies.store(Arc::new(vec![create_test_policy()]));
         let result = engine.evaluate("user-1", &["engineering".into()], "openai", "gpt-4");
         assert!(result.allowed);
         assert_eq!(result.reason, "Access granted by policy");
@@ -199,7 +203,6 @@ mod tests {
     #[test]
     fn test_denied_wrong_role() {
         let engine = PolicyEngine::new("http://localhost:8443".into());
-        engine.policies.store(Arc::new(vec![create_test_policy()]));
         let result = engine.evaluate("user-1", &["marketing".into()], "openai", "gpt-4");
         assert!(!result.allowed);
     }

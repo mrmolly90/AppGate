@@ -1,4 +1,4 @@
-scan:
+﻿scan:
   skip-dirs:
     - .git
     - gateway/target

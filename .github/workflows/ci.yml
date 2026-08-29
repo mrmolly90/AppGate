@@ -233,7 +233,6 @@ jobs:
         with:
           fail-on-severity: high
         continue-on-error: true
-        continue-on-error: true
 
       - name: Semgrep
         uses: semgrep/semgrep-action@v1

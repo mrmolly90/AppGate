@@ -1,8 +1,4 @@
-# =============================================================================
-# AppGate Control Plane — Simplified Docker Build
-# =============================================================================
-
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+FROM golang:1.23-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 
@@ -12,7 +8,9 @@ RUN go mod download
 COPY . .
 ARG TARGETARCH
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64}
-RUN go build -ldflags="-s -w -X main.Version=0.3.1 -X main.Commit=release -X main.BuildTime=2026-08-29" -o /control-plane ./cmd/server
+RUN go mod tidy && \
+    go build -ldflags="-s -w -X main.Version=0.3.1 -X main.Commit=release -X main.BuildTime=2026-08-29" \
+    -o /control-plane ./cmd/server
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /app

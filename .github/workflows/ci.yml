@@ -235,7 +235,7 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          skip-dirs: .git,gateway/target,control-plane/bin,node_modules,.terraform
+          trivyignores: security/trivy/.trivyignore
         continue-on-error: true
 
       - name: Dependency Review

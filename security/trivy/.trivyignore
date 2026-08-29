@@ -1,7 +1,12 @@
-# .trivyignore
-# Ignore specific CVEs with justification
-# CVE-2024-XXXXX - Not applicable to AppGate architecture
+﻿# Ignore build artifacts and dependencies
+gateway/target/
+control-plane/bin/
+node_modules/
+.git/
+.terraform/
 
-# Ignore specific files
-**/*.tf
+# Ignore documentation
 **/*.md
+
+# Ignore Terraform (Checkov handles IaC)
+**/*.tf

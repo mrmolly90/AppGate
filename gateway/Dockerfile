@@ -1,4 +1,4 @@
-FROM rust:1.80-alpine
+FROM rust:1.98-alpine
 WORKDIR /app
 COPY . .
 RUN apk add --no-cache musl-dev

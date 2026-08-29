@@ -1,4 +1,4 @@
-﻿# AppGate Staging Environment
+# AppGate Staging Environment
 # Uses remote state with locking
 
 terraform {

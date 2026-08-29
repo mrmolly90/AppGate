@@ -1,4 +1,4 @@
-﻿//! AppGate Gateway Library
+//! AppGate Gateway Library
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 

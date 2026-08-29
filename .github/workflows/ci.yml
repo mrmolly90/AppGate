@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 # AppGate CI/CD Pipeline — Production Hardened
 # Architecture:
 #   detect-changes -> [otel, rust, go, tf, helm] -> security-scan -> docker-build

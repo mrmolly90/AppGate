@@ -1,4 +1,4 @@
-﻿# AppGate Production Environment
+# AppGate Production Environment
 # Uses remote state with locking
 
 terraform {

@@ -236,7 +236,7 @@ jobs:
         continue-on-error: true
 
       - name: Semgrep
-        uses: returntocorp/semgrep-action@v1
+        uses: semgrep/semgrep-action@v1
         with:
           config: auto
         continue-on-error: true

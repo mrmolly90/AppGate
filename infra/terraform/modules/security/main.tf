@@ -64,7 +64,7 @@ resource "aws_wafv2_web_acl" "main" {
     }
     visibility_config {
       cloudwatch_metrics_enabled = true
-      metric_name               = "RateLimitRule"
+      metric_name                = "RateLimitRule"
       sampled_requests_enabled   = true
     }
   }
@@ -84,7 +84,7 @@ resource "aws_wafv2_web_acl" "main" {
     }
     visibility_config {
       cloudwatch_metrics_enabled = true
-      metric_name               = "AWSCommonRules"
+      metric_name                = "AWSCommonRules"
       sampled_requests_enabled   = true
     }
   }
@@ -103,14 +103,14 @@ resource "aws_wafv2_web_acl" "main" {
     }
     visibility_config {
       cloudwatch_metrics_enabled = true
-      metric_name               = "AWSSQLiRules"
+      metric_name                = "AWSSQLiRules"
       sampled_requests_enabled   = true
     }
   }
 
   visibility_config {
     cloudwatch_metrics_enabled = true
-    metric_name               = "AppGateWAF"
+    metric_name                = "AppGateWAF"
     sampled_requests_enabled   = true
   }
 

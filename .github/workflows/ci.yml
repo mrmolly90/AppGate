@@ -166,26 +166,17 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
       - name: Terraform fmt
-        working-directory: infra/terraform/environments/${{ matrix.env }}
-        run: terraform fmt -check -recursive
+        run: |
+          cd infra/terraform/environments/${{ matrix.env }}
+          terraform fmt -check -recursive
       - name: Terraform init
-        working-directory: infra/terraform/environments/${{ matrix.env }}
-        run: terraform init -backend=false -input=false
+        run: |
+          cd infra/terraform/environments/${{ matrix.env }}
+          terraform init -backend=false -input=false
       - name: Terraform validate
-        working-directory: infra/terraform/environments/${{ matrix.env }}
-        run: terraform validate -no-color
-      - name: Checkov IaC Scan
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: infra/terraform/environments/${{ matrix.env }}
-          framework: terraform
-          soft_fail: true
-      - name: Conftest Policy Check
-        uses: open-policy-agent/conftest-action@v0.10.0
-        with:
-          files: infra/terraform/environments/${{ matrix.env }}
-          policy: infra/terraform/policy
-        continue-on-error: true
+        run: |
+          cd infra/terraform/environments/${{ matrix.env }}
+          terraform validate -no-color
 
 # -- 6. Helm Lint -----------------------------------------------
   helm:

@@ -51,7 +51,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: control-plane
-          file: control-plane/Dockerfile
+          file: Dockerfile
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
@@ -67,7 +67,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: gateway
-          file: gateway/Dockerfile
+          file: Dockerfile
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }}

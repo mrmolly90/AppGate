@@ -1,18 +1,14 @@
-# =============================================================================
-# AppGate â€” Release Pipeline
-# =============================================================================
 name: Release
 
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v*"
 
 permissions:
   contents: write
   packages: write
   id-token: write
-  attestations: write
 
 env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
@@ -22,32 +18,41 @@ jobs:
     name: Release ${{ github.ref_name }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: .
-          format: spdx-json
-          output-file: sbom-release.spdx.json
+      - name: DIAGNOSTIC — Build control-plane (verbose)
+        run: |
+          echo "=== Dockerfile contents ==="
+          cat control-plane/Dockerfile
+          echo ""
+          echo "=== go.mod first 5 lines ==="
+          head -5 control-plane/go.mod
+          echo ""
+          echo "=== Building control-plane ==="
+          docker build --progress=plain --no-cache -t test-cp control-plane/ 2>&1 || echo "BUILD EXIT CODE: $?"
+
+      - name: DIAGNOSTIC — Build gateway (verbose)
+        run: |
+          echo "=== Dockerfile contents ==="
+          cat gateway/Dockerfile
+          echo ""
+          echo "=== Cargo.toml first 5 lines ==="
+          head -5 gateway/Cargo.toml
+          echo ""
+          echo "=== Building gateway ==="
+          docker build --progress=plain --no-cache -t test-gw gateway/ 2>&1 || echo "BUILD EXIT CODE: $?"
 
       - name: Build and push control-plane
-        id: build-cp
         uses: docker/build-push-action@v5
         with:
           context: control-plane
@@ -56,14 +61,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
             ${{ env.REGISTRY }}/appgate-control-plane:latest
-          push: false
-          # sbom: true
-          # provenance: true
-          cache-from: type=gha,scope=control-plane
-          cache-to: type=gha,mode=max,scope=control-plane
+          push: true
 
       - name: Build and push gateway
-        id: build-gw
         uses: docker/build-push-action@v5
         with:
           context: gateway
@@ -72,36 +72,4 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }}
             ${{ env.REGISTRY }}/appgate-gateway:latest
-          push: false
-          # sbom: true
-          # provenance: true
-          cache-from: type=gha,scope=gateway
-          cache-to: type=gha,mode=max,scope=gateway
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign control-plane image
-        env:
-          DIGEST: ${{ steps.build-cp.outputs.digest }}
-        run: |
-          cosign sign --yes \
-            --oidc-issuer https://token.actions.githubusercontent.com \
-            --oidc-client-id sigstore \
-            "${{ env.REGISTRY }}/appgate-control-plane@${{ steps.build-cp.outputs.digest }}"
-
-      - name: Sign gateway image
-        env:
-          DIGEST: ${{ steps.build-gw.outputs.digest }}
-        run: |
-          cosign sign --yes \
-            --oidc-issuer https://token.actions.githubusercontent.com \
-            --oidc-client-id sigstore \
-            "${{ env.REGISTRY }}/appgate-gateway@${{ steps.build-gw.outputs.digest }}"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          files: |
-            sbom-release.spdx.json
+          push: true

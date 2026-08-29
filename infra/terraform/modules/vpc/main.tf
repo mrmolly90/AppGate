@@ -99,7 +99,7 @@ resource "aws_internet_gateway" "this" {
 
 # NAT Gateway
 resource "aws_eip" "nat" {
-  count = var.enable_nat_gateway && !var.single_nat_gateway ? length(var.public_subnet_cidrs) : var.enable_nat_gateway ? 1 : 0
+  count  = var.enable_nat_gateway && !var.single_nat_gateway ? length(var.public_subnet_cidrs) : var.enable_nat_gateway ? 1 : 0
   domain = "vpc"
 
   tags = {
@@ -170,8 +170,8 @@ resource "aws_route_table_association" "private" {
 
 # VPC Endpoints for security (no traffic leaves AWS)
 resource "aws_vpc_endpoint" "s3" {
-  count       = var.enable_vpc_endpoints ? 1 : 0
-  vpc_id      = aws_vpc.this.id
+  count        = var.enable_vpc_endpoints ? 1 : 0
+  vpc_id       = aws_vpc.this.id
   service_name = "com.amazonaws.${data.aws_region.current.name}.s3"
 
   tags = {
@@ -181,11 +181,11 @@ resource "aws_vpc_endpoint" "s3" {
 }
 
 resource "aws_vpc_endpoint" "ecr_api" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.ecr.api"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = aws_subnet.private[*].id
+  count              = var.enable_vpc_endpoints ? 1 : 0
+  vpc_id             = aws_vpc.this.id
+  service_name       = "com.amazonaws.${data.aws_region.current.name}.ecr.api"
+  vpc_endpoint_type  = "Interface"
+  subnet_ids         = aws_subnet.private[*].id
   security_group_ids = [aws_security_group.vpc_endpoints[0].id]
 
   tags = {
@@ -195,11 +195,11 @@ resource "aws_vpc_endpoint" "ecr_api" {
 }
 
 resource "aws_vpc_endpoint" "ecr_dkr" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.ecr.dkr"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = aws_subnet.private[*].id
+  count              = var.enable_vpc_endpoints ? 1 : 0
+  vpc_id             = aws_vpc.this.id
+  service_name       = "com.amazonaws.${data.aws_region.current.name}.ecr.dkr"
+  vpc_endpoint_type  = "Interface"
+  subnet_ids         = aws_subnet.private[*].id
   security_group_ids = [aws_security_group.vpc_endpoints[0].id]
 
   tags = {
@@ -209,11 +209,11 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
 }
 
 resource "aws_vpc_endpoint" "cloudwatch" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.logs"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = aws_subnet.private[*].id
+  count              = var.enable_vpc_endpoints ? 1 : 0
+  vpc_id             = aws_vpc.this.id
+  service_name       = "com.amazonaws.${data.aws_region.current.name}.logs"
+  vpc_endpoint_type  = "Interface"
+  subnet_ids         = aws_subnet.private[*].id
   security_group_ids = [aws_security_group.vpc_endpoints[0].id]
 
   tags = {
@@ -223,11 +223,11 @@ resource "aws_vpc_endpoint" "cloudwatch" {
 }
 
 resource "aws_vpc_endpoint" "sts" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.sts"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = aws_subnet.private[*].id
+  count              = var.enable_vpc_endpoints ? 1 : 0
+  vpc_id             = aws_vpc.this.id
+  service_name       = "com.amazonaws.${data.aws_region.current.name}.sts"
+  vpc_endpoint_type  = "Interface"
+  subnet_ids         = aws_subnet.private[*].id
   security_group_ids = [aws_security_group.vpc_endpoints[0].id]
 
   tags = {

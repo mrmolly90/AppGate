@@ -1,7 +1,7 @@
-#![allow(dead_code)]
+﻿use crate::metrics;
 
 // =============================================================================
-// AppGate Gateway — HTTP Server
+// AppGate Gateway - HTTP Server
 // =============================================================================
 
 use bytes::Bytes;
@@ -44,6 +44,7 @@ pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Resul
     let tls_acceptor = crate::tls::load_tls_config(&config.tls_cert_path, &config.tls_key_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load TLS config: {e}"))?;
+
     let tls_acceptor = Arc::new(tls_acceptor);
 
     loop {
@@ -73,8 +74,8 @@ pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Resul
                 .keep_alive(true)
                 .header_read_timeout(std::time::Duration::from_secs(10))
                 .serve_connection(io, service_fn(|req| handle_request(req, peer_addr)));
-            let conn = conn.with_upgrades();
 
+            let conn = conn.with_upgrades();
             if let Err(e) = conn.await {
                 if !e.is_incomplete_message() {
                     warn!(target: "appgate::server", peer = %peer_addr, error = %e, "Connection error");
@@ -97,6 +98,7 @@ async fn handle_request(
             .body(Full::new(Bytes::from_static(b"ok\n")))
             .unwrap());
     }
+
     if req.method() == Method::GET && req.uri().path() == "/readyz" {
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -104,6 +106,7 @@ async fn handle_request(
             .body(Full::new(Bytes::from_static(b"ready\n")))
             .unwrap());
     }
+
     if req.method() == Method::GET && req.uri().path() == "/metrics" {
         let metrics = crate::metrics::gather_metrics();
         return Ok(Response::builder()
@@ -112,9 +115,11 @@ async fn handle_request(
             .body(Full::new(Bytes::from(metrics)))
             .unwrap());
     }
+
     if req.method() == Method::POST && req.uri().path() == "/v1/proxy" {
         return handle_proxy(req, peer_addr).await;
     }
+
     Ok(Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("content-type", "application/json")
@@ -142,6 +147,7 @@ async fn handle_proxy(
                 .unwrap());
         }
     };
+
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "application/json")

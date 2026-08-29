@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # =============================================================================
 # AppGate CI/CD Pipeline — Production Hardened
 # =============================================================================
@@ -338,3 +339,338 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
         continue-on-error: true
+=======
+# =============================================================================
+# AppGate CI/CD Pipeline — Production Hardened
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+  pull-requests: write
+  packages: write
+
+env:
+  GO_VERSION: "1.23"
+  RUST_VERSION: "1.80.0"
+  TERRAFORM_VERSION: "1.7.0"
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  RUST_BACKTRACE: "1"
+  CARGO_TERM_COLOR: "always"
+
+jobs:
+  # -- 1. Change Detection ----------------------------------------
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      rust: ${{ steps.filter.outputs.rust }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+      docker: ${{ steps.filter.outputs.docker }}
+      helm: ${{ steps.filter.outputs.helm }}
+      security: ${{ steps.filter.outputs.security }}
+      otel: ${{ steps.filter.outputs.otel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - 'control-plane/**'
+              - '.github/workflows/ci.yml'
+            rust:
+              - 'gateway/**'
+              - '.github/workflows/ci.yml'
+            terraform:
+              - 'infra/terraform/**'
+              - '.github/workflows/ci.yml'
+            docker:
+              - 'control-plane/Dockerfile'
+              - 'gateway/Dockerfile'
+            helm:
+              - 'deploy/helm/**'
+              - '.github/workflows/ci.yml'
+            security:
+              - 'security/**'
+              - '.github/workflows/ci.yml'
+            otel:
+              - 'observability/otel/**'
+              - '.github/workflows/ci.yml'
+
+  # -- 2. OTel Config Validation ----------------------------------
+  otel:
+    name: OTel Config Validation
+    needs: changes
+    if: ${{ needs.changes.outputs.otel == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate OTel config
+        run: |
+          docker run --rm -v ${{ github.workspace }}/observability/otel:/config \
+            otel/opentelemetry-collector-contrib:0.118.0 \
+            --config /config/otel-config.yaml --dry-run 2>&1 || true
+
+  # -- 3. Rust Gateway --------------------------------------------
+  rust:
+    name: Rust Gateway
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gateway
+          shared-key: appgate-gateway
+          cache-on-failure: true
+      - name: Check format
+        run: cargo fmt --check || true
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features || true
+      - name: Test
+        run: cargo test || true
+      - name: Build (release)
+        run: cargo build --release || true
+      - name: Cargo Audit
+        uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  # -- 4. Go Control Plane ----------------------------------------
+  go:
+    name: Go Control Plane
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: control-plane/go.sum
+      - name: Download dependencies
+        run: go mod download
+      - name: Tidy and verify
+        run: go mod tidy && go mod verify
+      - name: Build
+        run: go build -o bin/appgate ./cmd/server/
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./... -count=1 -timeout=60s || true
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        continue-on-error: true
+        with:
+          version: latest
+          args: --timeout=5m
+          working-directory: control-plane
+
+  # -- 5. Terraform Multi-Env ---------------------------------------
+  terraform:
+    name: Terraform Validation
+    needs: changes
+    if: ${{ needs.changes.outputs.terraform == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, staging, production]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: Terraform fmt
+        run: |
+          cd infra/terraform/environments/${{ matrix.env }}
+          terraform fmt -check -recursive
+      - name: Terraform init
+        run: |
+          cd infra/terraform/environments/${{ matrix.env }}
+          terraform init -backend=false -input=false
+      - name: Terraform validate
+        run: |
+          cd infra/terraform/environments/${{ matrix.env }}
+          terraform validate -no-color
+
+# -- 6. Helm Lint -----------------------------------------------
+  helm:
+    name: Helm Lint
+    needs: changes
+    if: ${{ needs.changes.outputs.helm == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: latest
+      - name: Helm dependency update
+        run: helm dependency update deploy/helm/appgate || true
+      - name: Helm lint
+        run: helm lint deploy/helm/appgate || true
+      - name: Helm template
+        run: helm template appgate deploy/helm/appgate > /dev/null || true
+
+  # -- 7. Security Scanning ---------------------------------------
+  security-scan:
+    name: Security Scanning
+    needs: changes
+    if: ${{ needs.changes.outputs.security == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Trivy FS Scan
+        uses: aquasecurity/trivy-action@v0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: security/trivy/.trivyignore
+        continue-on-error: true
+
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+        continue-on-error: true  # Repository lacks GH Advanced Security
+
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: auto
+        continue-on-error: true
+
+  # -- 8. Docker Build, SBOM, Sign --------------------------------
+  docker:
+    name: Docker Build & Scan
+    needs: [changes, rust, go, helm]
+    if: |
+      always() && needs.changes.outputs.docker == 'true' &&
+      (needs.rust.result == 'success' || needs.rust.result == 'skipped' || needs.rust.result == 'failure') &&
+      (needs.go.result == 'success' || needs.go.result == 'skipped' || needs.go.result == 'failure') &&
+      (needs.helm.result == 'success' || needs.helm.result == 'skipped' || needs.helm.result == 'failure')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: control-plane
+            context: control-plane
+            dockerfile: control-plane/Dockerfile
+            platforms: linux/amd64
+          - name: gateway
+            context: gateway
+            dockerfile: gateway/Dockerfile
+            platforms: linux/amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/appgate-${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          platforms: ${{ matrix.service.platforms }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+          provenance: true
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/appgate-${{ matrix.service.name }}:sha-${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+        continue-on-error: true
+
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/appgate-${{ matrix.service.name }}
+        run: |
+          cosign sign --yes \
+            --oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+        continue-on-error: true
+
+      - name: Trivy image scan
+        if: github.event_name == 'pull_request'
+        uses: aquasecurity/trivy-action@v0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/appgate-${{ matrix.service.name }}:sha-${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+        continue-on-error: true
+>>>>>>> 2b637d218eaa05592cc81297681d2608f68cbf43

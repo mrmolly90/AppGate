@@ -1,4 +1,4 @@
-# AppGate Development Environment
+﻿# AppGate Development Environment
 # Uses remote state with locking
 
 terraform {

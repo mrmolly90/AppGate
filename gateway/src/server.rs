@@ -4,7 +4,6 @@
 // AppGate Gateway — HTTP Server
 // =============================================================================
 
-use crate::Args;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -13,23 +12,36 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info, instrument, warn};
 
-/// Global active connection counter for metrics
 pub(crate) static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
+/// Server configuration passed from main
+#[derive(Clone, Debug)]
+pub struct ServerConfig {
+    pub listen_addr: String,
+    pub listen_port: u16,
+    pub control_plane_url: String,
+    pub tls_cert_path: String,
+    pub tls_key_path: String,
+    pub jwt_key_path: String,
+    pub jwt_issuer: String,
+    pub jwt_audience: String,
+    pub otlp_endpoint: String,
+}
+
 /// Run the HTTP server on the given address.
-pub async fn run_server(addr: SocketAddr, args: &Args) -> anyhow::Result<()> {
+pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to bind to {addr}: {e}"))?;
 
     info!(target: "appgate::server", addr = %addr, "Gateway server listening");
 
-    let tls_acceptor = crate::tls::load_tls_config(&args.tls_cert_path, &args.tls_key_path)
+    let tls_acceptor = crate::tls::load_tls_config(&config.tls_cert_path, &config.tls_key_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load TLS config: {e}"))?;
     let tls_acceptor = Arc::new(tls_acceptor);

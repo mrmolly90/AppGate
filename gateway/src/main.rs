@@ -103,7 +103,18 @@ fn main() -> anyhow::Result<()> {
         "Starting AppGate Gateway"
     );
 
-    runtime.block_on(async move { server::run_server(addr, &args).await })
+    runtime.block_on(async move { let server_config = server::ServerConfig {
+    listen_addr: args.listen_addr.clone(),
+    listen_port: args.listen_port,
+    control_plane_url: args.control_plane_url.clone(),
+    tls_cert_path: args.tls_cert_path.clone(),
+    tls_key_path: args.tls_key_path.clone(),
+    jwt_key_path: args.jwt_key_path.clone(),
+    jwt_issuer: args.jwt_issuer.clone(),
+    jwt_audience: args.jwt_audience.clone(),
+    otlp_endpoint: args.otlp_endpoint.clone(),
+};
+server::run_server(addr, server_config).await })
 }
 
 /// Build a NUMA-aware tokio multi-thread runtime.

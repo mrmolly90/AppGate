@@ -20,48 +20,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          go-version: '1.23'
 
-      - name: Build and push control-plane
+      - name: Build control-plane binary
+        working-directory: control-plane
         run: |
-          cd control-plane
-          docker buildx build \
-            --platform linux/amd64 \
-            --tag ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }} \
-            --tag ${{ env.REGISTRY }}/appgate-control-plane:latest \
-            --push \
-            --progress=plain \
-            .
+          go mod tidy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../control-plane-binary ./cmd/server
 
-      - name: Build and push gateway
+      - name: Build control-plane Docker image (from binary)
         run: |
-          cd gateway
-          docker buildx build \
-            --platform linux/amd64 \
-            --tag ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }} \
-            --tag ${{ env.REGISTRY }}/appgate-gateway:latest \
-            --push \
-            --progress=plain \
-            .
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign control-plane image
-        run: |
-          cosign sign --yes ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
-
-      - name: Sign gateway image
-        run: |
-          cosign sign --yes ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }}
+          cat > Dockerfile.cp << 'EOF'
+          FROM gcr.io/distroless/static:nonroot
+          COPY control-plane-binary /app/control-plane
+          EXPOSE 8080 9090
+          ENTRYPOINT ["/app/control-plane"]
+          EOF
+          docker build -f Dockerfile.cp -t ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }} .
+          docker push ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

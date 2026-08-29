@@ -136,3 +136,14 @@ fn status_to_string(status: u16) -> &'static str {
         _ => "other",
     }
 }
+
+
+/// Record an overload rejection (connection limit exceeded)
+pub fn record_overload_rejection(reason: &str) {
+    tracing::warn!(target: "appgate::metrics", reason, "Overload rejection");
+}
+
+/// Record an upstream connection failure
+pub fn record_upstream_failure(provider: &str, reason: &str) {
+    tracing::warn!(target: "appgate::metrics", provider, reason, "Upstream failure");
+}

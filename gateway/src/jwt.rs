@@ -1,8 +1,8 @@
-use std::fs;
 use anyhow::Context;
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation};
-use serde::{Deserialize, Deserializer, Serialize};
 use serde::de;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -30,18 +30,25 @@ pub struct ValidatedToken {
 }
 
 fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where D: Deserializer<'de> {
+where
+    D: Deserializer<'de>,
+{
     struct AudienceVisitor;
     impl<'de> de::Visitor<'de> for AudienceVisitor {
         type Value = Vec<String>;
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("string or array of strings")
         }
-        fn visit_str<E>(self, value: &str) -> Result<Vec<String>, E> where E: de::Error {
+        fn visit_str<E>(self, value: &str) -> Result<Vec<String>, E>
+        where
+            E: de::Error,
+        {
             Ok(vec![value.to_string()])
         }
         fn visit_seq<A>(self, seq: A) -> Result<Vec<String>, A::Error>
-        where A: de::SeqAccess<'de> {
+        where
+            A: de::SeqAccess<'de>,
+        {
             Deserialize::deserialize(de::value::SeqAccessDeserializer::new(seq))
         }
     }
@@ -54,21 +61,31 @@ pub struct JwtValidator {
 }
 
 impl JwtValidator {
-    pub fn new(key_path: &str, issuer: &str, audience: &str, _jwks_url: Option<&str>) -> anyhow::Result<Self> {
+    pub fn new(
+        key_path: &str,
+        issuer: &str,
+        audience: &str,
+        _jwks_url: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let static_key = if !key_path.is_empty() && std::path::Path::new(key_path).exists() {
             let pem = fs::read_to_string(key_path)
                 .with_context(|| format!("Failed to read JWT key: {}", key_path))?;
             Some(DecodingKey::from_rsa_pem(pem.as_bytes())?)
-        } else { None };
-        
+        } else {
+            None
+        };
+
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[issuer]);
         validation.set_audience(&[audience]);
         validation.leeway = 0;
-        
-        Ok(Self { static_key, validation })
+
+        Ok(Self {
+            static_key,
+            validation,
+        })
     }
-    
+
     pub fn validate(&self, token: &str) -> anyhow::Result<ValidatedToken> {
         let header = jsonwebtoken::decode_header(token)?;
         let key = match &self.static_key {

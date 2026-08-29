@@ -1,8 +1,6 @@
 # =============================================================================
 # AppGate Terraform — Provider Configuration
 # =============================================================================
-# Version constraints and provider lock for linux_amd64, linux_arm64, darwin_arm64
-# =============================================================================
 
 terraform {
   required_version = ">= 1.7.0"
@@ -44,27 +42,8 @@ provider "aws" {
   }
 }
 
-provider "helm" {
-  kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority)
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-    }
-  }
-}
-
-provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority)
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-  }
-}
+# Helm and Kubernetes providers are configured in environment main.tf
+# after EKS cluster is created, to avoid circular dependencies during validation
 
 variable "aws_region" {
   description = "AWS region"

@@ -1,5 +1,5 @@
-use std::time::Duration;
 use moka::future::Cache;
+use std::time::Duration;
 use tracing::debug;
 
 pub struct DistributedRateLimiter {
@@ -14,8 +14,12 @@ impl DistributedRateLimiter {
             .build();
         Ok(Self { local_cache: cache })
     }
-    
-    pub async fn check(&self, key: &str, _policy_limits: Option<&crate::policy::RateLimits>) -> anyhow::Result<bool> {
+
+    pub async fn check(
+        &self,
+        key: &str,
+        _policy_limits: Option<&crate::policy::RateLimits>,
+    ) -> anyhow::Result<bool> {
         let cache_key = format!("rl:{}", key);
         if self.local_cache.get(&cache_key).await == Some(false) {
             return Ok(false);

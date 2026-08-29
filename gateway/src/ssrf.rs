@@ -9,13 +9,15 @@ impl SSRFDefense {
         let mut domains = HashSet::new();
         domains.insert("api.openai.com".into());
         domains.insert("api.anthropic.com".into());
-        Self { approved_domains: domains }
+        Self {
+            approved_domains: domains,
+        }
     }
-    
+
     pub fn approve_domain(&mut self, domain: &str) {
         self.approved_domains.insert(domain.into());
     }
-    
+
     pub fn validate_upstream(&self, _url: &str) -> Result<(), String> {
         // Stub validation
         Ok(())

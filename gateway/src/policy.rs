@@ -1,4 +1,4 @@
-﻿#![allow(dead_code)]
+#![allow(dead_code)]
 
 //! Policy evaluation engine
 
@@ -85,7 +85,10 @@ impl PolicyEngine {
     }
 
     fn start_policy_refresh(&self) {
-        let url = format!("{}/v1/policies", self.control_plane_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/policies",
+            self.control_plane_url.trim_end_matches('/')
+        );
         let client = self.client.clone();
         let policies = Arc::clone(&self.policies);
         let healthy = Arc::clone(&self.healthy);
@@ -101,10 +104,14 @@ impl PolicyEngine {
                                 tracing::info!(target: "appgate::policy", count = count, "Policies refreshed");
                                 healthy.store(true, Ordering::Relaxed);
                             }
-                            Err(e) => tracing::warn!(target: "appgate::policy", error = %e, "Failed to parse policies"),
+                            Err(e) => {
+                                tracing::warn!(target: "appgate::policy", error = %e, "Failed to parse policies")
+                            }
                         }
                     }
-                    Ok(resp) => tracing::warn!(target: "appgate::policy", status = %resp.status(), "Policy fetch returned non-success"),
+                    Ok(resp) => {
+                        tracing::warn!(target: "appgate::policy", status = %resp.status(), "Policy fetch returned non-success")
+                    }
                     Err(e) => {
                         tracing::warn!(target: "appgate::policy", error = %e, "Failed to fetch policies");
                         healthy.store(false, Ordering::Relaxed);
@@ -115,7 +122,13 @@ impl PolicyEngine {
         });
     }
 
-    pub fn evaluate(&self, identity_id: &str, roles: &[String], provider: &str, model: &str) -> EvaluationResult {
+    pub fn evaluate(
+        &self,
+        identity_id: &str,
+        roles: &[String],
+        provider: &str,
+        model: &str,
+    ) -> EvaluationResult {
         let policies = self.policies.load();
 
         if policies.is_empty() {
@@ -128,9 +141,13 @@ impl PolicyEngine {
 
         for policy in policies.iter() {
             let subject_match = Self::matches_subject(policy, identity_id, roles);
-            if !subject_match { continue; }
+            if !subject_match {
+                continue;
+            }
 
-            if !policy.spec.providers.is_empty() && !policy.spec.providers.contains(&provider.to_string()) {
+            if !policy.spec.providers.is_empty()
+                && !policy.spec.providers.contains(&provider.to_string())
+            {
                 continue;
             }
 

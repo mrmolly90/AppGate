@@ -1,4 +1,4 @@
-﻿//! AppGate Gateway - Zero-trust LLM security gateway
+//! AppGate Gateway - Zero-trust LLM security gateway
 //!
 //! This crate provides the AppGate SDP Gateway, a high-performance
 //! zero-trust security gateway for LLM API access.
@@ -22,8 +22,8 @@ use tokio::runtime::{self, Runtime};
 
 mod metrics;
 mod server;
-mod tls;
 mod telemetry;
+mod tls;
 
 #[cfg(feature = "audit")]
 mod audit;
@@ -103,9 +103,7 @@ fn main() -> anyhow::Result<()> {
         "Starting AppGate Gateway"
     );
 
-    runtime.block_on(async move {
-        server::run_server(addr, &args).await
-    })
+    runtime.block_on(async move { server::run_server(addr, &args).await })
 }
 
 /// Build a NUMA-aware tokio multi-thread runtime.

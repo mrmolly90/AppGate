@@ -72,7 +72,7 @@ jsonwebtoken = "9.3"
 [dev-dependencies]
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
-mockall = "0.13"
+mockall = "0.15"
 wiremock = "0.6"
 
 [features]

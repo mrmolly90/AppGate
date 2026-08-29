@@ -48,7 +48,7 @@ jobs:
 
       - name: Build and push control-plane
         id: build-cp
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: control-plane
           file: control-plane/Dockerfile
@@ -56,15 +56,15 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
             ${{ env.REGISTRY }}/appgate-control-plane:latest
-          push: true
-          sbom: true
-          provenance: true
+          push: false
+          # sbom: true
+          # provenance: true
           cache-from: type=gha,scope=control-plane
           cache-to: type=gha,mode=max,scope=control-plane
 
       - name: Build and push gateway
         id: build-gw
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v5
         with:
           context: gateway
           file: gateway/Dockerfile
@@ -72,9 +72,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }}
             ${{ env.REGISTRY }}/appgate-gateway:latest
-          push: true
-          sbom: true
-          provenance: true
+          push: false
+          # sbom: true
+          # provenance: true
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,mode=max,scope=gateway
 

@@ -30,46 +30,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: DIAGNOSTIC — Build control-plane (verbose)
-        run: |
-          echo "=== Dockerfile contents ==="
-          cat control-plane/Dockerfile
-          echo ""
-          echo "=== go.mod first 5 lines ==="
-          head -5 control-plane/go.mod
-          echo ""
-          echo "=== Building control-plane ==="
-          docker build --progress=plain --no-cache -t test-cp control-plane/ 2>&1 || echo "BUILD EXIT CODE: $?"
-
-      - name: DIAGNOSTIC — Build gateway (verbose)
-        run: |
-          echo "=== Dockerfile contents ==="
-          cat gateway/Dockerfile
-          echo ""
-          echo "=== Cargo.toml first 5 lines ==="
-          head -5 gateway/Cargo.toml
-          echo ""
-          echo "=== Building gateway ==="
-          docker build --progress=plain --no-cache -t test-gw gateway/ 2>&1 || echo "BUILD EXIT CODE: $?"
-
       - name: Build and push control-plane
-        uses: docker/build-push-action@v5
-        with:
-          context: control-plane
-          file: control-plane/Dockerfile
-          platforms: linux/amd64
-          tags: |
-            ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
-            ${{ env.REGISTRY }}/appgate-control-plane:latest
-          push: true
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }} \
+            --tag ${{ env.REGISTRY }}/appgate-control-plane:latest \
+            --push \
+            control-plane/
 
       - name: Build and push gateway
-        uses: docker/build-push-action@v5
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }} \
+            --tag ${{ env.REGISTRY }}/appgate-gateway:latest \
+            --push \
+            gateway/
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign control-plane image
+        run: |
+          cosign sign --yes ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
+
+      - name: Sign gateway image
+        run: |
+          cosign sign --yes ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          context: gateway
-          file: gateway/Dockerfile
-          platforms: linux/amd64
-          tags: |
-            ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }}
-            ${{ env.REGISTRY }}/appgate-gateway:latest
-          push: true
+          generate_release_notes: true
+          files: |
+            sbom-*.spdx.json

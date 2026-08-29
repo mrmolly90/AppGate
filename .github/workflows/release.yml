@@ -32,25 +32,25 @@ jobs:
 
       - name: Build and push control-plane
         run: |
+          cd control-plane
           docker buildx build \
             --platform linux/amd64 \
-            --file control-plane/Dockerfile \
             --tag ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }} \
             --tag ${{ env.REGISTRY }}/appgate-control-plane:latest \
             --push \
             --progress=plain \
-            control-plane/
+            .
 
       - name: Build and push gateway
         run: |
+          cd gateway
           docker buildx build \
             --platform linux/amd64 \
-            --file gateway/Dockerfile \
             --tag ${{ env.REGISTRY }}/appgate-gateway:${{ github.ref_name }} \
             --tag ${{ env.REGISTRY }}/appgate-gateway:latest \
             --push \
             --progress=plain \
-            gateway/
+            .
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3

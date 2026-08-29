@@ -150,7 +150,6 @@ jobs:
           version: latest
           args: --timeout=5m
           working-directory: control-plane
-        continue-on-error: true
 
   # -- 5. Terraform Multi-Env ---------------------------------------
   terraform:

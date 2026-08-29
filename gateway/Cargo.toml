@@ -45,7 +45,7 @@ prometheus = "0.14"
 moka = { version = "0.12", features = ["future"] }
 
 # ── Rate Limiting ────────────────────────────────────────────────
-governor = "0.7"
+governor = "0.10"
 
 # ── Utilities ────────────────────────────────────────────────────
 bytes = "1.8"

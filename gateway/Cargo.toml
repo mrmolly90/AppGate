@@ -71,7 +71,7 @@ jsonwebtoken = "9.3"
 # ── Testing ──────────────────────────────────────────────────────
 [dev-dependencies]
 tokio-test = "0.4"
-criterion = { version = "0.5", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 mockall = "0.13"
 wiremock = "0.6"
 

@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "appgate-gateway"
 version = "0.3.0"
 edition = "2024"

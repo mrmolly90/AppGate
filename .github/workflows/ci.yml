@@ -192,7 +192,7 @@ jobs:
           framework: terraform
           soft_fail: true
       - name: Conftest Policy Check (non-blocking)
-        uses: instrumenta/conftest-action@v1
+        uses: open-policy-agent/conftest-action@v0.10.0
         with:
           files: infra/terraform/environments/${{ matrix.env }}
           policy: infra/terraform/policy
@@ -228,7 +228,7 @@ jobs:
           fetch-depth: 0
 
       - name: Trivy FS Scan
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.24.0
         with:
           scan-type: fs
           scan-ref: .
@@ -340,7 +340,7 @@ jobs:
 
       - name: Trivy image scan (non-blocking)
         if: github.event_name == 'pull_request'
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.24.0
         with:
           image-ref: ${{ env.REGISTRY }}/appgate-${{ matrix.service.name }}:sha-${{ github.sha }}
           format: table

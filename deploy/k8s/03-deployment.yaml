@@ -1,0 +1,136 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+  labels:
+    app: appgate-control-plane
+    version: v0.3.1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: appgate-control-plane
+  template:
+    metadata:
+      labels:
+        app: appgate-control-plane
+        version: v0.3.1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: appgate
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values: [appgate-control-plane]
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: control-plane
+          image: ghcr.io/mrmolly90/appgate-control-plane:v0.3.1
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: appgate-config
+          env:
+            - name: APPGATE_PG_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: pg-dsn
+            - name: APPGATE_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: redis-password
+                  optional: true
+            - name: APPGATE_JWT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: jwt-public-key
+            - name: APPGATE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: openai-api-key
+            - name: APPGATE_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: anthropic-api-key
+            - name: APPGATE_ETCD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: etcd-password
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+      volumes:
+        - name: tmp
+          emptyDir: {}

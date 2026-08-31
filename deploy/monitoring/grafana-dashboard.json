@@ -1,0 +1,45 @@
+﻿{
+  "dashboard": {
+    "title": "AppGate Control Plane",
+    "tags": ["appgate", "llm-gateway"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "type": "stat",
+        "targets": [{"expr": "rate(appgate_requests_total[5m])"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "title": "P95 Latency",
+        "type": "graph",
+        "targets": [{"expr": "histogram_quantile(0.95, rate(appgate_request_duration_seconds_bucket[5m]))"}],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "title": "Token Consumption",
+        "type": "graph",
+        "targets": [{"expr": "rate(appgate_tokens_consumed_total[5m])"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "title": "Policy Violations",
+        "type": "graph",
+        "targets": [{"expr": "rate(appgate_policy_violations_total[5m])"}],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "title": "Rate Limit Hits",
+        "type": "stat",
+        "targets": [{"expr": "rate(appgate_rate_limit_hits_total[5m])"}],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "title": "Upstream Errors",
+        "type": "stat",
+        "targets": [{"expr": "rate(appgate_upstream_errors_total[5m])"}],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+﻿apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: appgate-metrics
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - appgate-system
+  selector:
+    matchLabels:
+      app: appgate-control-plane
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

@@ -1,0 +1,70 @@
+﻿apiVersion: v1
+kind: Namespace
+metadata:
+  name: appgate-system
+  labels:
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: appgate-default-deny
+  namespace: appgate-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: appgate-control-plane
+  namespace: appgate-system
+spec:
+  podSelector:
+    matchLabels:
+      app: appgate-control-plane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: appgate-redis-master
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: appgate-postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: appgate-etcd
+      ports:
+        - protocol: TCP
+          port: 2379
+    - to: []  # LLM providers (OpenAI, Anthropic, etc.)
+      ports:
+        - protocol: TCP
+          port: 443

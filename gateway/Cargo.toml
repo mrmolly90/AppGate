@@ -56,7 +56,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # ── gRPC / Protobuf ──────────────────────────────────────────────
 tonic = { version = "0.12", features = ["tls"] }
-prost = "0.13"
+prost = "0.14"
 
 # ── Compression ──────────────────────────────────────────────────
 flate2 = "1.0"

@@ -1,55 +1,93 @@
 name: Release
-
 on:
   push:
-    tags:
-      - "v*"
-
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag: { description: 'Tag', required: true, default: 'v0.3.2' }
 
 env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
+  GATEWAY_IMAGE: ${{ github.event.repository.name }}-gateway
+  CONTROL_PLANE_IMAGE: ${{ github.event.repository.name }}-control-plane
+
+permissions:
+  contents: read
+  packages: write        # <-- THIS WAS MISSING (fixes your error!)
+  id-token: write
+  attestations: write
 
 jobs:
-  release:
-    name: Release ${{ github.ref_name }}
+  build-gateway:
+    name: Build Gateway (Rust)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-gnu }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: 'gateway -> target' }
+      - working-directory: gateway
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu
+          mkdir -p ../gateway-binary
+          cp target/x86_64-unknown-linux-gnu/release/appgate-gateway ../gateway-binary/
+      - uses: actions/upload-artifact@v4
+        with: { name: gateway-binary, path: gateway-binary/appgate-gateway, retention-days: 1 }
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-
-      - name: Build control-plane binary
-        working-directory: control-plane
+  build-control-plane:
+    name: Build Control Plane (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23', cache-dependency-path: control-plane/go.sum }
+      - working-directory: control-plane
         run: |
           go mod tidy
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../control-plane-binary ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w -X main.version=${{ github.ref_name }}' -o ../control-plane-binary ./cmd/server
+      - uses: actions/upload-artifact@v4
+        with: { name: control-plane-binary, path: control-plane-binary/appgate-control-plane, retention-days: 1 }
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+  scan-and-push:
+    name: Scan & Push to GHCR
+    needs: [build-gateway, build-control-plane]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: gateway-binary, path: gateway-binary }
+      - uses: actions/download-artifact@v4
+        with: { name: control-plane-binary, path: control-plane-binary }
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build control-plane Docker image (from binary)
-        run: |
-          cat > Dockerfile.cp << 'EOF'
-          FROM gcr.io/distroless/static:nonroot
-          COPY control-plane-binary /app/control-plane
-          EXPOSE 8080 9090
-          ENTRYPOINT ["/app/control-plane"]
-          EOF
-          docker build -f Dockerfile.cp -t ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }} .
-          docker push ${{ env.REGISTRY }}/appgate-control-plane:${{ github.ref_name }}
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: docker/build-push-action@v6
         with:
+          context: .
+          file: gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.GATEWAY_IMAGE }}:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.GATEWAY_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: control-plane/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.CONTROL_PLANE_IMAGE }}:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.CONTROL_PLANE_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            gateway-binary/appgate-gateway
+            control-plane-binary/appgate-control-plane
           generate_release_notes: true

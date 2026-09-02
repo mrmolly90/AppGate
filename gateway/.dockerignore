@@ -1,33 +1,11 @@
-# Build artifacts
-target/
-
-# Git
+﻿target/
+Dockerfile*
+.dockerignore
 .git/
 .gitignore
-
-# IDE
-.idea/
-.vscode/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Local env
-.env
-*.env
-
-# Docs
 *.md
-docs/
-
-# Terraform
-terraform/
-infra/
-
-# Helm
-charts/
-deploy/
-
-# Security
-security/
+.github/
+certs/
+docker-compose.yml
+*.pem
+*.key

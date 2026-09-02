@@ -3,10 +3,10 @@ kind: Namespace
 metadata:
   name: appgate-system
   labels:
-    istio-injection: enabled
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/audit: restricted
-    pod-security.kubernetes.io/warn: restricted
+    app.kubernetes.io/name: appgate
+    app.kubernetes.io/version: 'v0.3.2'
+    pod-security.kubernetes.io/enforce: baseline        # <-- CHANGE FROM restricted
+    pod-security.kubernetes.io/enforce-version: latest
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

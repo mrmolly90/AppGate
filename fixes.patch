@@ -1,0 +1,41 @@
+﻿--- a/gateway/src/main.rs
++++ b/gateway/src/main.rs
+@@ -42,7 +42,7 @@
+ /// AppGate SDP Gateway — Zero-trust security gateway
+ #[derive(Parser, Debug, Clone)]
+ #[command(name = "appgate-gateway", version, about)]
+-struct Args {
++pub struct Args {
+     /// Listen address
+     #[arg(long, default_value = "0.0.0.0")]
+     pub listen_addr: String,
+@@ -106,7 +106,7 @@
+         "Starting AppGate Gateway"
+     );
+ 
+-    runtime.block_on(async move { server::run_server(addr, &args).await })
++    runtime.block_on(async move { server::run_server(addr, &args).await })
+ }
+ 
+ /// Build a NUMA-aware tokio multi-thread runtime.
+--- a/gateway/src/server.rs
++++ b/gateway/src/server.rs
+@@ -15,7 +15,7 @@
+ use std::sync::atomic::{AtomicUsize, Ordering};
+ use std::sync::Arc;
+ use tokio::net::TcpListener;
+-use hyper_util::rt::TokioIo;
++use hyper_util::rt::{TokioIo, TokioTimer};
+ use tracing::{error, info, instrument, warn};
+ 
+ /// Global active connection counter for metrics
+@@ -59,8 +59,8 @@
+ 
+             let io = TokioIo::new(tls_stream);
+             let conn = http1::Builder::new()
++                .timer(TokioTimer::new())
+                 .keep_alive(true)
+-                .max_keep_alive(Some(120))
+                 .header_read_timeout(std::time::Duration::from_secs(10))
+                 .serve_connection(io, service_fn(|req| handle_request(req, peer_addr)));
+             let conn = conn.with_upgrades();

@@ -30,3 +30,13 @@ data:
   APPGATE_UPSTREAM_MAX_RETRIES: "3"
   APPGATE_MODEL_ROUTING_ENABLED: "true"
   APPGATE_FALLBACK_ENABLED: "true"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: appgate-config
+  namespace: appgate-system
+data:
+  pg-dsn: "postgres://appgate:changeme-strong-password@appgate-postgres:5432/appgate?sslmode=disable"
+  redis-url: "redis://appgate-redis:6379"
+  control-plane-url: "http://appgate-control-plane:8080"
+  # keep your other existing keys

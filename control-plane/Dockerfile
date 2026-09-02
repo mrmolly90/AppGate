@@ -1,4 +1,5 @@
-FROM golang:1.23-alpine
+FROM golang:1.23-alpine AS builder
+ENV GOTOOLCHAIN=auto
 WORKDIR /app
 COPY . .
 RUN go mod tidy

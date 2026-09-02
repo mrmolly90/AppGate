@@ -1,4 +1,4 @@
-//! AppGate Gateway - Zero-trust LLM security gateway
+﻿//! AppGate Gateway - Zero-trust LLM security gateway
 //!
 //! This crate provides the AppGate SDP Gateway, a high-performance
 //! zero-trust security gateway for LLM API access.
@@ -39,46 +39,46 @@ mod ssrf;
 /// AppGate SDP Gateway — Zero-trust security gateway
 #[derive(Parser, Debug, Clone)]
 #[command(name = "appgate-gateway", version, about)]
-struct Args {
+pub struct Args {
     /// Listen address
     #[arg(long, default_value = "0.0.0.0")]
-    listen_addr: String,
+    pub listen_addr: String,
 
     /// Listen port
     #[arg(long, default_value_t = 8443)]
-    listen_port: u16,
+    pub listen_port: u16,
 
     /// Control plane gRPC endpoint
     #[arg(long, default_value = "http://control-plane:9090")]
-    control_plane_url: String,
+    pub control_plane_url: String,
 
     /// TLS certificate path (PEM)
     #[arg(long, default_value = "/etc/appgate/tls/cert.pem")]
-    tls_cert_path: String,
+    pub tls_cert_path: String,
 
     /// TLS private key path (PEM)
     #[arg(long, default_value = "/etc/appgate/tls/key.pem")]
-    tls_key_path: String,
+    pub tls_key_path: String,
 
     /// JWT verification key path (PEM)
     #[arg(long, default_value = "/etc/appgate/jwt/verify.pem")]
-    jwt_key_path: String,
+    pub jwt_key_path: String,
 
     /// JWT expected issuer
     #[arg(long, default_value = "https://appgate.example.com")]
-    jwt_issuer: String,
+    pub jwt_issuer: String,
 
     /// JWT expected audience
     #[arg(long, default_value = "appgate-gateway")]
-    jwt_audience: String,
+    pub jwt_audience: String,
 
     /// Number of tokio worker threads (0 = auto-detect)
     #[arg(long, default_value_t = 0)]
-    worker_threads: usize,
+    pub worker_threads: usize,
 
     /// OpenTelemetry endpoint
     #[arg(long, default_value = "http://otel-collector:4317")]
-    otlp_endpoint: String,
+    pub otlp_endpoint: String,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -103,20 +103,7 @@ fn main() -> anyhow::Result<()> {
         "Starting AppGate Gateway"
     );
 
-    runtime.block_on(async move {
-        let server_config = server::ServerConfig {
-            listen_addr: args.listen_addr.clone(),
-            listen_port: args.listen_port,
-            control_plane_url: args.control_plane_url.clone(),
-            tls_cert_path: args.tls_cert_path.clone(),
-            tls_key_path: args.tls_key_path.clone(),
-            jwt_key_path: args.jwt_key_path.clone(),
-            jwt_issuer: args.jwt_issuer.clone(),
-            jwt_audience: args.jwt_audience.clone(),
-            otlp_endpoint: args.otlp_endpoint.clone(),
-        };
-        server::run_server(addr, server_config).await
-    })
+    runtime.block_on(async move { server::run_server(addr, &args).await })
 }
 
 /// Build a NUMA-aware tokio multi-thread runtime.
@@ -144,4 +131,3 @@ fn build_runtime(worker_threads: usize) -> anyhow::Result<Runtime> {
         .build()
         .context("Failed to build tokio runtime")
 }
-

@@ -15,12 +15,12 @@ import (
 
 // JWTService handles JWT creation and validation.
 type JWTService struct {
-	signingKey    *rsa.PrivateKey
-	verifyingKey  *rsa.PublicKey
-	issuer        string
-	audience      string
-	allowedAlgs   []string
-	clockSkew     time.Duration
+	signingKey   *rsa.PrivateKey
+	verifyingKey *rsa.PublicKey
+	issuer       string
+	audience     string
+	allowedAlgs  []string
+	clockSkew    time.Duration
 }
 
 // NewJWTService creates a new JWT service with secure defaults.
@@ -38,8 +38,8 @@ func NewJWTService(signingKey *rsa.PrivateKey, issuer, audience string) *JWTServ
 // Claims represents the JWT claims for AppGate.
 type Claims struct {
 	jwt.RegisteredClaims
-	Roles  []string          `json:"roles"`
-	Scope  string            `json:"scope"`
+	Roles    []string          `json:"roles"`
+	Scope    string            `json:"scope"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
@@ -178,9 +178,7 @@ func RequireRole(role string) func(http.Handler) http.Handler {
 	}
 }
 
-// Context key type to avoid collisions
-type contextKey string
-
+// Context key type to avoid collisionss
 const claimsKey contextKey = "claims"
 
 func contextWithClaims(ctx context.Context, claims *Claims) context.Context {

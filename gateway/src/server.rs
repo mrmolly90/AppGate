@@ -179,6 +179,7 @@ async fn handle_connection(
 
     let conn = http1::Builder::new()
         .timer(TokioTimer::new())
+        .timer(TokioTimer::new())
         .keep_alive(true)
         .header_read_timeout(Duration::from_secs(HEADER_READ_TIMEOUT_SECS))
         .serve_connection(io, service_fn(|req| handle_request(req, peer_addr)));

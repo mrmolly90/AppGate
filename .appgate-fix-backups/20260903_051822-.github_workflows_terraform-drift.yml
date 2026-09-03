@@ -1,11 +1,11 @@
-﻿# =============================================================================
+# =============================================================================
 # AppGate — Terraform Drift Detection
 # =============================================================================
 name: Terraform Drift Detection
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 6 * * *"  # Daily at 6 AM UTC
   workflow_dispatch:
 
 permissions:
@@ -24,8 +24,8 @@ jobs:
       run:
         working-directory: infra/terraform/environments/${{ matrix.env }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.7.0
           terraform_wrapper: false
@@ -33,11 +33,11 @@ jobs:
         run: terraform init -input=false
       - name: Terraform plan
         id: plan
-        run: terraform plan -no-color -detailed-exitcode > /tmp/terraform-plan.txt 2>&1
+        run: terraform plan -no-color -detailed-exitcode
         continue-on-error: true
       - name: Create drift issue
-        if: steps.plan.outputs.exitcode == '2'
-        uses: actions/github-script@v7
+        if: steps.plan.outputs.exitcode != 0
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

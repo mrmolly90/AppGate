@@ -1,17 +1,17 @@
 // =============================================================================
-// AppGate Gateway — SSRF Defense (Production)
+// AppGate Gateway â€” SSRF Defense (Production)
 // =============================================================================
 //
 // Validates upstream URLs against:
-//   • Approved domain allowlist
-//   • Private IP range blocking (RFC 1918, loopback, link-local)
-//   • Metadata endpoint blocking (AWS, GCP, Azure)
-//   • Scheme enforcement (HTTPS only in production)
+//   â€¢ Approved domain allowlist
+//   â€¢ Private IP range blocking (RFC 1918, loopback, link-local)
+//   â€¢ Metadata endpoint blocking (AWS, GCP, Azure)
+//   â€¢ Scheme enforcement (HTTPS only in production)
 // =============================================================================
 
 use std::collections::HashSet;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use tracing::{debug, warn};
+use std::net::IpAddr;
+use tracing::debug;
 
 pub struct SSRFDefense {
     approved_domains: HashSet<String>,

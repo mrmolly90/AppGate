@@ -1,12 +1,7 @@
 // =============================================================================
 // AppGate Gateway — Distributed Rate Limiter (Production)
 // =============================================================================
-//
-// Uses Redis cell algorithm for cluster-wide rate limiting per identity.
-// Falls back to local in-memory limiter if Redis is unavailable.
-// =============================================================================
 
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 
@@ -19,13 +14,13 @@ impl DistributedRateLimiter {
     pub async fn new(redis_url: Option<String>) -> anyhow::Result<Self> {
         let redis = match redis_url {
             Some(url) => match redis::Client::open(url) {
-                Ok(client) => match client.get_connection_manager().await {
+                Ok(client) => match redis::aio::ConnectionManager::new(client).await {
                     Ok(conn) => {
                         debug!("Connected to Redis for distributed rate limiting");
                         Some(conn)
                     }
                     Err(e) => {
-                        warn!("Redis connection manager failed: {}. Using local fallback.", e);
+                        warn!("Redis ConnectionManager failed: {}. Using local fallback.", e);
                         None
                     }
                 },
@@ -48,14 +43,13 @@ impl DistributedRateLimiter {
         Ok(Self { redis, local_fallback })
     }
 
-    /// Check if request is allowed. Returns (allowed, remaining, reset_time).
     pub async fn check(
         &self,
         identity: &str,
         policy_limits: Option<&crate::policy::RateLimits>,
     ) -> anyhow::Result<(bool, u64, u64)> {
-        let limit = policy_limits.map(|p| p.requests_per_minute).unwrap_or(100);
-        let window = 60; // 1 minute window
+        let limit = policy_limits.map(|p| p.requests_per_minute).unwrap_or(100) as u64;
+        let window = 60u64;
 
         match &self.redis {
             Some(conn) => self.check_redis(conn, identity, limit, window).await,
@@ -73,15 +67,15 @@ impl DistributedRateLimiter {
         let key = format!("ratelimit:{}", identity);
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        // Redis cell algorithm (sliding window)
         let mut pipe = redis::pipe();
         pipe.atomic()
-            .zremrangebyscore(&key, 0, (now - window) as i64)
-            .zcard(&key)
-            .zadd(&key, now as f64, now as i64)
-            .expire(&key, window as i64);
+            .cmd("ZREMRANGEBYSCORE").arg(&key).arg(0i64).arg((now - window) as i64)
+            .cmd("ZCARD").arg(&key)
+            .cmd("ZADD").arg(&key).arg(now as f64).arg(now as i64)
+            .cmd("EXPIRE").arg(&key).arg(window as i64);
 
-        let results: Vec<redis::Value> = pipe.query_async(conn).await?;
+        let mut conn_clone = conn.clone();
+        let results: Vec<redis::Value> = pipe.query_async(&mut conn_clone).await?;
 
         let count = match &results.get(1) {
             Some(redis::Value::Int(c)) => *c as u64,

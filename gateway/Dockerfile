@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 # AppGate Gateway — Production Build with Dependency Caching via cargo-chef
 
 # ------------------------------------------------------------------

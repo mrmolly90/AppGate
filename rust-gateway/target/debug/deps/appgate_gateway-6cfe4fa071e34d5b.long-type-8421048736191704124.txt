@@ -1,1 +1,0 @@
-OpenTelemetryLayer<Layered<tracing_subscriber::fmt::Layer<Layered<EnvFilter, tracing_subscriber::Registry>, JsonFields, Format<tracing_subscriber::fmt::format::Json>>, Layered<EnvFilter, tracing_subscriber::Registry>>, opentelemetry_sdk::trace::Tracer>

@@ -1,6 +1,12 @@
 rules:
   - id: no-hardcoded-credentials
-    pattern: '(?i)(password|secret|api_key|apiKey|secret_key|secretKey)\s*[:=]\s*["'"'"'][^"'"'"']+["'"'"']'
+    pattern-either:
+      - pattern: 'password: "..."'
+      - pattern: 'secret: "..."'
+      - pattern: 'api_key: "..."'
+      - pattern: 'apiKey: "..."'
+      - pattern: 'secret_key: "..."'
+      - pattern: 'secretKey: "..."'
     message: "Hardcoded credentials detected. Use environment variables or secrets manager."
     severity: ERROR
 

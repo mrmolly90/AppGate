@@ -13,7 +13,7 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
-      maxSurge: 1
+      maxSurge: 25%
   selector:
     matchLabels:
       app.kubernetes.io/name: appgate-control-plane
@@ -31,17 +31,17 @@ spec:
     spec:
       serviceAccountName: {{ include "appgate.fullname" . }}-control-plane
       securityContext:
-        {{- toYaml .Values.controlPlane.podSecurityContext | default (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "fsGroup" 65532 "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 8 }}
+        {{- toYaml .Values.controlPlane.podSecurityContext | default (dict "runAsNonRoot" true "runAsUser" 65534 "runAsGroup" 65534 "fsGroup" 65534 "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 8 }}
       {{- with .Values.controlPlane.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: control-plane
-          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default "latest" }}"
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy | default "IfNotPresent" }}
           securityContext:
-            {{- toYaml .Values.controlPlane.securityContext | default (dict "runAsNonRoot" true "runAsUser" 65532 "runAsGroup" 65532 "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 12 }}
+            {{- toYaml .Values.controlPlane.securityContext | default (dict "runAsNonRoot" true "runAsUser" 65534 "runAsGroup" 65534 "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")) "seccompProfile" (dict "type" "RuntimeDefault")) | nindent 12 }}
           ports:
             - containerPort: {{ .Values.controlPlane.service.port | default 8080 }}
               name: http
@@ -61,12 +61,31 @@ spec:
           volumeMounts:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
-            {{- toYaml .Values.controlPlane.probes.liveness | default (dict "httpGet" (dict "path" "/healthz" "port" 8080) "initialDelaySeconds" 10 "periodSeconds" 10) | nindent 12 }}
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
-            {{- toYaml .Values.controlPlane.probes.readiness | default (dict "httpGet" (dict "path" "/readyz" "port" 8080) "initialDelaySeconds" 5 "periodSeconds" 5) | nindent 12 }}
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
-            {{- toYaml .Values.controlPlane.resources | default (dict "requests" (dict "cpu" "250m" "memory" "256Mi") "limits" (dict "cpu" "1" "memory" "512Mi")) | nindent 12 }}
+            {{- toYaml .Values.controlPlane.resources | default (dict "requests" (dict "cpu" "500m" "memory" "512Mi") "limits" (dict "cpu" "2" "memory" "1Gi")) | nindent 12 }}
       {{- with .Values.controlPlane.volumes }}
       volumes:
         {{- toYaml . | nindent 8 }}

@@ -11,7 +11,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ include "appgate.fullname" . }}-control-plane
-  minReplicas: {{ .Values.controlPlane.hpa.minReplicas | default 2 }}
+  minReplicas: {{ .Values.controlPlane.hpa.minReplicas | default 3 }}
   maxReplicas: {{ .Values.controlPlane.hpa.maxReplicas | default 10 }}
   metrics:
     - type: Resource
@@ -26,6 +26,23 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.controlPlane.hpa.targetMemoryUtilizationPercentage | default 80 }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -40,8 +57,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ include "appgate.fullname" . }}-gateway
-  minReplicas: {{ .Values.gateway.hpa.minReplicas | default 3 }}
-  maxReplicas: {{ .Values.gateway.hpa.maxReplicas | default 50 }}
+  minReplicas: {{ .Values.gateway.hpa.minReplicas | default 10 }}
+  maxReplicas: {{ .Values.gateway.hpa.maxReplicas | default 200 }}
   metrics:
     - type: Resource
       resource:
@@ -55,3 +72,20 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.gateway.hpa.targetMemoryUtilizationPercentage | default 80 }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 10
+          periodSeconds: 15
+      selectPolicy: Max

@@ -1,91 +1,70 @@
-﻿// Package metrics exposes Prometheus metrics for the AppGate control plane.
 package metrics
 
 import (
-    "net/http"
-    "strconv"
-
-    "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promauto"
-    "github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 var (
-    requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_requests_total",
-        Help: "Total LLM proxy requests",
-    }, []string{"project", "upstream", "model", "status"})
+	// RequestsTotal counts all HTTP requests by status code and path.
+	RequestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "appgate_control_plane_requests_total",
+			Help: "Total HTTP requests to the control plane",
+		},
+		[]string{"status", "path"},
+	)
 
-    requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-        Name:    "appgate_request_duration_seconds",
-        Help:    "Request latency distribution",
-        Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
-    }, []string{"project", "upstream"})
+	// RequestDuration tracks request latency in seconds.
+	RequestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "appgate_control_plane_request_duration_seconds",
+			Help:    "Request latency in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"path"},
+	)
 
-    tokensInput = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_tokens_input_total",
-        Help: "Input tokens consumed",
-    }, []string{"project", "model"})
+	// ActiveConnections tracks the number of active connections.
+	ActiveConnections = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "appgate_control_plane_active_connections",
+			Help: "Current number of active connections",
+		},
+	)
 
-    tokensOutput = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_tokens_output_total",
-        Help: "Output tokens consumed",
-    }, []string{"project", "model"})
+	// PolicyEvaluations counts policy evaluation results.
+	PolicyEvaluations = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "appgate_control_plane_policy_evaluations_total",
+			Help: "Total policy evaluations by result",
+		},
+		[]string{"result"},
+	)
 
-    violationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_violations_total",
-        Help: "Security policy violations",
-    }, []string{"project", "violation_type"})
+	// AuditEvents counts audit events by type.
+	AuditEvents = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "appgate_control_plane_audit_events_total",
+			Help: "Total audit events by type",
+		},
+		[]string{"event_type"},
+	)
 
-    rateLimitHits = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_rate_limit_hits_total",
-        Help: "Rate limit rejections",
-    }, []string{"project"})
+	// GatewayRegistrations counts gateway node registrations.
+	GatewayRegistrations = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "appgate_control_plane_gateway_registrations_total",
+			Help: "Total gateway node registrations",
+		},
+	)
 
-    upstreamErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_upstream_errors_total",
-        Help: "Upstream LLM provider errors",
-    }, []string{"project", "upstream", "error_type"})
-
-    activeConnections = promauto.NewGauge(prometheus.GaugeOpts{
-        Name: "appgate_active_connections",
-        Help: "Current active connections",
-    })
+	// DatabaseErrors counts database operation errors.
+	DatabaseErrors = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "appgate_control_plane_database_errors_total",
+			Help: "Total database errors by operation",
+		},
+		[]string{"operation"},
+	)
 )
-
-func Handler() http.Handler {
-    return promhttp.Handler()
-}
-
-func RecordRequest(project, upstream, model string, status int, duration float64, inputTokens, outputTokens int) {
-    statusStr := strconv.Itoa(status)
-    requestsTotal.WithLabelValues(project, upstream, model, statusStr).Inc()
-    requestDuration.WithLabelValues(project, upstream).Observe(duration)
-    tokensInput.WithLabelValues(project, model).Add(float64(inputTokens))
-    tokensOutput.WithLabelValues(project, model).Add(float64(outputTokens))
-}
-
-func RecordTokenUsage(project, model string, inputTokens, outputTokens int) {
-    tokensInput.WithLabelValues(project, model).Add(float64(inputTokens))
-    tokensOutput.WithLabelValues(project, model).Add(float64(outputTokens))
-}
-
-func RecordViolation(project, violationType string) {
-    violationsTotal.WithLabelValues(project, violationType).Inc()
-}
-
-func RecordRateLimitHit(project string) {
-    rateLimitHits.WithLabelValues(project).Inc()
-}
-
-func RecordUpstreamError(project, upstream, errorType string) {
-    upstreamErrors.WithLabelValues(project, upstream, errorType).Inc()
-}
-
-func IncActiveConnections() {
-    activeConnections.Inc()
-}
-
-func DecActiveConnections() {
-    activeConnections.Dec()
-}

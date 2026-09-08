@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package appgate;
+
+option go_package = "appgate-control-plane/pkg/api/pb";
+
+// GatewayControlPlane is the service that gateways use to connect to the control plane.
+service GatewayControlPlane {
+  // StreamConfig opens a long-lived stream for config push and heartbeats.
+  rpc StreamConfig(stream StreamConfigRequest) returns (stream ConfigUpdate);
+
+  // Heartbeat is called periodically by gateways to report health.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // ReportAudit sends batched audit events from gateways to the control plane.
+  rpc ReportAudit(stream AuditEvent) returns (AuditAck);
+
+  // RequestCertificate allows gateways to request mTLS certificates.
+  rpc RequestCertificate(CertificateRequest) returns (CertificateResponse);
+}
+
+message StreamConfigRequest {
+  string node_id = 1;
+  string version = 2;
+  string region = 3;
+}
+
+message ConfigUpdate {
+  string config_id = 1;
+  repeated string backends = 2;
+  repeated string routes = 3;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  HeartbeatMetrics metrics = 2;
+}
+
+message HeartbeatMetrics {
+  uint64 requests_total = 1;
+  uint64 errors_total = 2;
+  double latency_p99 = 3;
+}
+
+message HeartbeatResponse {
+  string command = 1;
+}
+
+message AuditEvent {
+  string event_type = 1;
+  string actor_id = 2;
+  string action = 3;
+  string resource = 4;
+  string result = 5;
+  string correlation_id = 6;
+  string source = 7;
+  bytes metadata = 8;
+}
+
+message AuditAck {
+  int32 accepted_count = 1;
+}
+
+message CertificateRequest {
+  string node_id = 1;
+  string csr_pem = 2;
+  string common_name = 3;
+}
+
+message CertificateResponse {
+  string cert_pem = 1;
+  string ca_cert_pem = 2;
+  int64 expires_at = 3;
+}

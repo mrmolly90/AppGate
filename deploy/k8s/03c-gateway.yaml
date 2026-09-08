@@ -1,13 +1,16 @@
+# deploy/k8s/03c-gateway.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: appgate-gateway
   namespace: appgate-system
-  labels:
-    app: appgate-gateway
-    version: v0.3.2
 spec:
   replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: appgate-gateway
@@ -15,78 +18,109 @@ spec:
     metadata:
       labels:
         app: appgate-gateway
-        version: v0.3.2
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
+        prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: appgate
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values: [appgate-gateway]
+                topologyKey: kubernetes.io/hostname
       containers:
-      - name: gateway
-        image: ghcr.io/mrmolly90/appgate-gateway:v0.3.2
-        imagePullPolicy: IfNotPresent
-        ports:
-        - name: http
-          containerPort: 8080
-        - name: metrics
-          containerPort: 9090
-        envFrom:
-        - configMapRef:
-            name: appgate-config
-        env:
-        - name: APPGATE_CONTROL_PLANE_URL
-          value: "http://appgate-control-plane:8080"
-        - name: APPGATE_REDIS_URL
-          value: "redis://appgate-redis:6379"
-        - name: APPGATE_REDIS_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: appgate-secrets
-              key: redis-password
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: http
-          initialDelaySeconds: 10
-          periodSeconds: 15
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: http
-          initialDelaySeconds: 5
-          periodSeconds: 5
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: appgate-gateway
-  namespace: appgate-system
-spec:
-  selector:
-    app: appgate-gateway
-  ports:
-  - name: http
-    port: 8080
-    targetPort: 8080
-  - name: metrics
-    port: 9090
-    targetPort: 9090
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: appgate-gateway
-  namespace: appgate-system
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app: appgate-gateway
+        - name: gateway
+          image: ghcr.io/mrmolly90/appgate-gateway:v0.3.3
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: grpc
+          env:
+            - name: APPGATE_BIND_ADDR
+              value: "0.0.0.0"
+            - name: APPGATE_PORT
+              value: "8080"
+            - name: APPGATE_CONTROL_PLANE_URL
+              value: "http://appgate-control-plane:8080"
+            - name: APPGATE_UPSTREAM_DEFAULT_URL
+              value: ""
+            - name: APPGATE_RATE_LIMIT_ENABLED
+              value: "true"
+            - name: APPGATE_RATE_LIMIT_RPS
+              value: "100"
+            - name: APPGATE_CACHE_ENABLED
+              value: "true"
+            - name: APPGATE_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: appgate-secrets
+                  key: redis-url
+            - name: RUST_LOG
+              value: "appgate=info"
+            - name: APPGATE_TLS_ENABLED
+              value: "false"
+            - name: APPGATE_ENVIRONMENT
+              value: "production"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "2000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 100Mi

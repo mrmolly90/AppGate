@@ -1,33 +1,28 @@
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls_pemfile::{certs, pkcs8_private_keys};
-use std::fs;
-use std::sync::Arc;
-use tokio_rustls::TlsAcceptor;
-use tracing::info;
+use rustls::ServerConfig;
+use std::path::Path;
+use tokio::fs;
 
-fn ensure_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
+pub async fn load_tls_config(
+    cert_path: impl AsRef<Path>,
+    key_path: impl AsRef<Path>,
+) -> Result<ServerConfig, Box<dyn std::error::Error + Send + Sync>> {
+    let cert_data = fs::read(cert_path).await?;
+    let key_data = fs::read(key_path).await?;
 
-pub async fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<TlsAcceptor> {
-    ensure_crypto_provider();
-    let cert_file = fs::File::open(cert_path)?;
-    let mut cert_reader = std::io::BufReader::new(cert_file);
-    let cert_chain: Vec<CertificateDer> = certs(&mut cert_reader).collect::<Result<Vec<_>, _>>()?;
+    let certs = rustls_pemfile::certs(&mut cert_data.as_slice())
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let key_file = fs::File::open(key_path)?;
-    let mut key_reader = std::io::BufReader::new(key_file);
-    let keys: Vec<_> = pkcs8_private_keys(&mut key_reader).collect::<Result<Vec<_>, _>>()?;
-    let key: PrivateKeyDer = keys
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No private key"))?
-        .into();
+    let key = rustls_pemfile::private_key(&mut key_data.as_slice())?
+        .ok_or("no private key found")?;
 
-    let config = rustls::ServerConfig::builder()
+    let mut config = ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_cert(cert_chain, key)?;
+        .with_single_cert(certs, key)?;
 
-    info!("TLS config loaded from {}", cert_path);
-    Ok(TlsAcceptor::from(Arc::new(config)))
+    config.alpn_protocols = vec![
+        b"h2".to_vec(),
+        b"http/1.1".to_vec(),
+    ];
+
+    Ok(config)
 }

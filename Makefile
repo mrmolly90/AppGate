@@ -64,9 +64,9 @@ docker-all: docker-control-plane docker-gateway ## Build all Docker images
 
 # ── Terraform ─────────────────────────────────────────────────────
 tf-init: ## Initialize Terraform for all environments
-	cd infra/terraform/environments/dev && terraform init -backend=false -input=false
-	cd infra/terraform/environments/staging && terraform init -backend=false -input=false
-	cd infra/terraform/environments/production && terraform init -backend=false -input=false
+	cd infra/terraform/environments/dev && terraform init -input=false
+	cd infra/terraform/environments/staging && terraform init -input=false
+	cd infra/terraform/environments/production && terraform init -input=false
 
 tf-validate: ## Validate Terraform for all environments
 	cd infra/terraform/environments/dev && terraform validate -no-color

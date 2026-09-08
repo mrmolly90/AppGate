@@ -46,14 +46,14 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: appgate-redis-master
+              app: appgate-redis
       ports:
         - protocol: TCP
           port: 6379
     - to:
         - podSelector:
             matchLabels:
-              app: appgate-postgresql
+              app: appgate-postgres
       ports:
         - protocol: TCP
           port: 5432

@@ -1,81 +1,49 @@
-# =============================================================================
-# AppGate — Security Module (WAF, Security Groups, GuardDuty)
-# =============================================================================
-# All resources tagged with environment for cost tracking.
-# =============================================================================
-
 terraform {
   required_version = ">= 1.7.0"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
 }
 
-variable "environment" {
-  description = "Environment name (dev/staging/production)"
-  type        = string
-}
+variable "environment" { type = string }
+variable "vpc_id" { type = string }
+variable "vpc_cidr" { type = string }
+variable "private_subnet_cidrs" { type = list(string) }
+variable "tags" { type = map(string) default = {} }
 
-variable "vpc_id" {
-  description = "VPC ID for security groups"
-  type        = string
-}
-
-variable "vpc_cidr" {
-  description = "VPC CIDR block"
-  type        = string
-}
-
-variable "private_subnet_cidrs" {
-  description = "Private subnet CIDR blocks"
-  type        = list(string)
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-  default     = {}
-}
-
-# ── WAF WebACL ────────────────────────────────────────────────────
+# WAF WebACL — scaled for millions of RPS
 resource "aws_wafv2_web_acl" "main" {
   count       = var.environment == "production" ? 1 : 0
   name        = "appgate-${var.environment}-waf"
-  description = "WAF for AppGate ${var.environment}"
+  description = "WAF for AppGate ${var.environment} — millions of RPS capacity"
   scope       = "REGIONAL"
 
-  default_action {
-    allow {}
-  }
+  default_action { allow {} }
 
-  # Rate-based rule: 5000 requests per 5 minutes
+  # Rate-based rule: 2,000,000 requests per 5 minutes = ~6666 RPS
+  # Compatible with millions of traffic target
   rule {
     name     = "rate-limit"
     priority = 1
-    action   = "block"
+    action { block {} }
     statement {
       rate_based_statement {
-        limit              = 5000
+        limit              = 2000000
         aggregate_key_type = "IP"
       }
     }
     visibility_config {
       cloudwatch_metrics_enabled = true
-      metric_name                = "RateLimitRule"
+      metric_name               = "RateLimitRule"
       sampled_requests_enabled   = true
     }
   }
 
-  # AWS managed rules
+  # AWS managed common rules
   rule {
     name     = "aws-common-rules"
     priority = 2
-    override_action {
-      none {}
-    }
+    override_action { none {} }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
@@ -84,17 +52,16 @@ resource "aws_wafv2_web_acl" "main" {
     }
     visibility_config {
       cloudwatch_metrics_enabled = true
-      metric_name                = "AWSCommonRules"
+      metric_name               = "AWSCommonRules"
       sampled_requests_enabled   = true
     }
   }
 
+  # SQL injection protection
   rule {
     name     = "aws-sqli-rules"
     priority = 3
-    override_action {
-      none {}
-    }
+    override_action { none {} }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesSQLiRuleSet"
@@ -103,14 +70,36 @@ resource "aws_wafv2_web_acl" "main" {
     }
     visibility_config {
       cloudwatch_metrics_enabled = true
-      metric_name                = "AWSSQLiRules"
+      metric_name               = "AWSSQLiRules"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Bot control — critical for public-facing proxy
+  rule {
+    name     = "aws-bot-control"
+    priority = 4
+    override_action { none {} }
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesBotControlRuleSet"
+        vendor_name = "AWS"
+        rule_action_override {
+          action_to_use { count {} }
+          name = "SignalNonBrowserUserAgent"
+        }
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name               = "AWSBotControl"
       sampled_requests_enabled   = true
     }
   }
 
   visibility_config {
     cloudwatch_metrics_enabled = true
-    metric_name                = "AppGateWAF"
+    metric_name               = "AppGateWAF"
     sampled_requests_enabled   = true
   }
 
@@ -120,7 +109,7 @@ resource "aws_wafv2_web_acl" "main" {
   })
 }
 
-# ── Security Groups ───────────────────────────────────────────────
+# Security Groups — renamed from ECS to EKS
 resource "aws_security_group" "gateway_alb" {
   name        = "appgate-${var.environment}-gateway-alb"
   description = "Security group for AppGate gateway ALB"
@@ -135,11 +124,11 @@ resource "aws_security_group" "gateway_alb" {
   }
 
   egress {
-    description = "Allow all outbound traffic"
+    description = "Allow all outbound to VPC"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = merge(var.tags, {
@@ -148,17 +137,25 @@ resource "aws_security_group" "gateway_alb" {
   })
 }
 
-resource "aws_security_group" "gateway_ecs" {
-  name        = "appgate-${var.environment}-gateway-ecs"
-  description = "Security group for AppGate gateway ECS tasks"
+resource "aws_security_group" "gateway_eks" {
+  name        = "appgate-${var.environment}-gateway-eks"
+  description = "Security group for AppGate gateway EKS pods"
   vpc_id      = var.vpc_id
 
   ingress {
     description     = "Traffic from ALB"
-    from_port       = 8443
-    to_port         = 8443
+    from_port       = 8080
+    to_port         = 8080
     protocol        = "tcp"
     security_groups = [aws_security_group.gateway_alb.id]
+  }
+
+  ingress {
+    description = "gRPC inter-pod communication"
+    from_port   = 9080
+    to_port     = 9080
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
 
   ingress {
@@ -170,7 +167,7 @@ resource "aws_security_group" "gateway_ecs" {
   }
 
   egress {
-    description = "Allow all outbound traffic"
+    description = "Allow all outbound (controlled by Cilium)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -178,22 +175,19 @@ resource "aws_security_group" "gateway_ecs" {
   }
 
   tags = merge(var.tags, {
-    Name        = "appgate-${var.environment}-gateway-ecs"
+    Name        = "appgate-${var.environment}-gateway-eks"
     Environment = var.environment
   })
 }
 
-# ── GuardDuty ─────────────────────────────────────────────────────
+# GuardDuty
 resource "aws_guardduty_detector" "main" {
   count  = var.environment == "production" ? 1 : 0
   enable = true
-
-  tags = merge(var.tags, {
-    Environment = var.environment
-  })
+  tags   = merge(var.tags, { Environment = var.environment })
 }
 
-# ── Outputs ───────────────────────────────────────────────────────
+# Outputs
 output "waf_acl_id" {
   value = var.environment == "production" ? aws_wafv2_web_acl.main[0].id : null
 }
@@ -202,6 +196,6 @@ output "gateway_alb_security_group_id" {
   value = aws_security_group.gateway_alb.id
 }
 
-output "gateway_ecs_security_group_id" {
-  value = aws_security_group.gateway_ecs.id
+output "gateway_eks_security_group_id" {
+  value = aws_security_group.gateway_eks.id
 }

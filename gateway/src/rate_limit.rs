@@ -1,132 +1,132 @@
-// =============================================================================
-// AppGate Gateway — Distributed Rate Limiter (Production)
-// =============================================================================
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{debug, warn};
-
-pub struct DistributedRateLimiter {
+pub struct RateLimiter {
+    buckets: Arc<RwLock<HashMap<String, TokenBucket>>>,
+    config: crate::config::RateLimitConfig,
     redis: Option<redis::aio::ConnectionManager>,
-    local_fallback: moka::future::Cache<String, u32>,
 }
 
-impl DistributedRateLimiter {
-    pub async fn new(redis_url: Option<String>) -> anyhow::Result<Self> {
-        let redis = match redis_url {
-            Some(url) => match redis::Client::open(url) {
-                Ok(client) => match redis::aio::ConnectionManager::new(client).await {
-                    Ok(conn) => {
-                        debug!("Connected to Redis for distributed rate limiting");
-                        Some(conn)
-                    }
+struct TokenBucket {
+    tokens: f64,
+    last_update: Instant,
+    capacity: f64,
+    rate_per_sec: f64,
+}
+
+impl TokenBucket {
+    fn new(capacity: f64, rate_per_sec: f64) -> Self {
+        Self {
+            tokens: capacity,
+            last_update: Instant::now(),
+            capacity,
+            rate_per_sec,
+        }
+    }
+
+    fn consume(&mut self, amount: f64) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_update).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate_per_sec).min(self.capacity);
+        self.last_update = now;
+
+        if self.tokens >= amount {
+            self.tokens -= amount;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl RateLimiter {
+    pub async fn new(config: &crate::config::RateLimitConfig) -> Self {
+        let redis = if let Ok(url) = std::env::var("APPGATE_REDIS_URL") {
+            match redis::Client::open(url.clone()) {
+                Ok(client) => match client.get_connection_manager().await {
+                    Ok(conn) => Some(conn),
                     Err(e) => {
-                        warn!("Redis ConnectionManager failed: {}. Using local fallback.", e);
+                        tracing::warn!("Redis connection failed: {}", e);
                         None
                     }
                 },
                 Err(e) => {
-                    warn!("Invalid Redis URL: {}. Using local fallback.", e);
+                    tracing::warn!("Redis client creation failed: {}", e);
                     None
                 }
-            },
-            None => {
-                warn!("No Redis URL configured. Using local fallback rate limiting.");
-                None
             }
+        } else {
+            None
         };
 
-        let local_fallback = moka::future::Cache::builder()
-            .time_to_live(Duration::from_secs(60))
-            .max_capacity(100_000)
-            .build();
-
-        Ok(Self { redis, local_fallback })
-    }
-
-    pub async fn check(
-        &self,
-        identity: &str,
-        policy_limits: Option<&crate::policy::RateLimits>,
-    ) -> anyhow::Result<(bool, u64, u64)> {
-        let limit = policy_limits.map(|p| p.requests_per_minute).unwrap_or(100) as u64;
-        let window = 60u64;
-
-        match &self.redis {
-            Some(conn) => self.check_redis(conn, identity, limit, window).await,
-            None => self.check_local(identity, limit, window).await,
+        Self {
+            buckets: Arc::new(RwLock::new(HashMap::new())),
+            config: config.clone(),
+            redis,
         }
     }
 
-    async fn check_redis(
-        &self,
-        conn: &redis::aio::ConnectionManager,
-        identity: &str,
-        limit: u64,
-        window: u64,
-    ) -> anyhow::Result<(bool, u64, u64)> {
-        let key = format!("ratelimit:{}", identity);
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-        let mut pipe = redis::pipe();
-        pipe.atomic()
-            .cmd("ZREMRANGEBYSCORE").arg(&key).arg(0i64).arg((now - window) as i64)
-            .cmd("ZCARD").arg(&key)
-            .cmd("ZADD").arg(&key).arg(now as f64).arg(now as i64)
-            .cmd("EXPIRE").arg(&key).arg(window as i64);
-
-        let mut conn_clone = conn.clone();
-        let results: Vec<redis::Value> = pipe.query_async(&mut conn_clone).await?;
-
-        let count = match &results.get(1) {
-            Some(redis::Value::Int(c)) => *c as u64,
-            _ => 0,
-        };
-
-        let allowed = count < limit;
-        let remaining = if allowed { limit - count } else { 0 };
-        let reset = now + window;
-
-        debug!(
-            target: "appgate::ratelimit",
-            identity = %identity,
-            count = %count,
-            limit = %limit,
-            allowed = %allowed,
-            "Rate limit check"
-        );
-
-        Ok((allowed, remaining, reset))
-    }
-
-    async fn check_local(
-        &self,
-        identity: &str,
-        limit: u64,
-        _window: u64,
-    ) -> anyhow::Result<(bool, u64, u64)> {
-        let key = format!("{}:{}", identity, Self::current_minute());
-        let count = self.local_fallback.get(&key).await.unwrap_or(0);
-
-        let allowed = (count as u64) < limit;
-        let remaining = if allowed { limit - count as u64 } else { 0 };
-        let reset = Self::next_minute();
-
-        if allowed {
-            self.local_fallback.insert(key, count + 1).await;
+    pub async fn check(&self, key: &str, provider: &str, model: &str) -> bool {
+        if !self.config.enabled {
+            return true;
         }
 
-        Ok((allowed, remaining, reset))
+        // Distributed check via Redis if available
+        if let Some(ref redis_conn) = self.redis {
+            let composite_key = format!("ratelimit:{}:{}:{}", key, provider, model);
+            return self.check_redis(redis_conn, &composite_key).await;
+        }
+
+        // Local fallback
+        let mut buckets = self.buckets.write().await;
+        let bucket = buckets.entry(key.to_string()).or_insert_with(|| {
+            TokenBucket::new(
+                self.config.burst_size as f64,
+                self.config.requests_per_second as f64,
+            )
+        });
+        bucket.consume(1.0)
     }
 
-    fn current_minute() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 60
+    async fn check_redis(&self, redis: &redis::aio::ConnectionManager, key: &str) -> bool {
+        let mut conn = redis.clone();
+        let script = redis::Script::new(r#"
+            local current = redis.call('GET', KEYS[1])
+            if current == false then
+                redis.call('SET', KEYS[1], 1, 'EX', ARGV[1])
+                return 1
+            end
+            local val = tonumber(current)
+            if val >= tonumber(ARGV[2]) then
+                return 0
+            end
+            redis.call('INCR', KEYS[1])
+            return 1
+        "#);
+        let result: Result<i64, redis::RedisError> = script
+            .key(key)
+            .arg(self.config.window_secs)
+            .arg(self.config.requests_per_second)
+            .invoke_async(&mut conn)
+            .await;
+        match result {
+            Ok(1) => true,
+            Ok(0) => false,
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!("Redis rate limit script failed: {}", e);
+                true // Fail open
+            }
+        }
     }
 
-    fn next_minute() -> u64 {
-        (Self::current_minute() + 1) * 60
+    pub async fn cleanup_old_buckets(&self) {
+        let mut buckets = self.buckets.write().await;
+        let now = Instant::now();
+        buckets.retain(|_, bucket| {
+            now.duration_since(bucket.last_update) < Duration::from_secs(self.config.window_secs * 2)
+        });
     }
 }

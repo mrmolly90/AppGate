@@ -25,6 +25,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: appgate-control-plane
+                name: appgate-gateway
                 port:
                   number: 80

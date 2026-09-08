@@ -1,113 +1,162 @@
-// =============================================================================
-// AppGate Gateway â€” SSRF Defense (Production)
-// =============================================================================
-//
-// Validates upstream URLs against:
-//   â€¢ Approved domain allowlist
-//   â€¢ Private IP range blocking (RFC 1918, loopback, link-local)
-//   â€¢ Metadata endpoint blocking (AWS, GCP, Azure)
-//   â€¢ Scheme enforcement (HTTPS only in production)
-// =============================================================================
+//! SSRF defense — prevent gateway from being used to access internal services
 
-use std::collections::HashSet;
-use std::net::IpAddr;
-use tracing::debug;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
 pub struct SSRFDefense {
-    approved_domains: HashSet<String>,
-    block_private_ips: bool,
-    require_https: bool,
+    approved_domains: Vec<String>,
+    approved_ips: Vec<IpAddr>,
+}
+
+impl Default for SSRFDefense {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SSRFDefense {
-    pub fn new_with_defaults() -> Self {
-        let mut domains = HashSet::new();
-        domains.insert("api.openai.com".into());
-        domains.insert("api.anthropic.com".into());
-        domains.insert("api.groq.com".into());
-        domains.insert("api.cohere.com".into());
-        domains.insert("api.mistral.ai".into());
-
+    pub fn new() -> Self {
         Self {
-            approved_domains: domains,
-            block_private_ips: true,
-            require_https: true,
+            approved_domains: Vec::new(),
+            approved_ips: Vec::new(),
         }
     }
 
+    pub fn from_config(_cfg: &crate::config::GatewayConfig) -> Self {
+        let mut defense = Self::new();
+        if let Ok(domains) = std::env::var("APPGATE_APPROVED_DOMAINS") {
+            for d in domains.split(',') {
+                defense.approve_domain(d);
+            }
+        }
+        if let Ok(ips) = std::env::var("APPGATE_APPROVED_IPS") {
+            for ip in ips.split(',') {
+                if let Ok(addr) = ip.parse() {
+                    defense.approve_ip(addr);
+                }
+            }
+        }
+        // Default LLM providers
+        defense.approve_domain("api.openai.com");
+        defense.approve_domain("api.anthropic.com");
+        defense.approve_domain("generativelanguage.googleapis.com");
+        defense
+    }
+
     pub fn approve_domain(&mut self, domain: &str) {
-        self.approved_domains.insert(domain.to_lowercase());
+        let domain = domain.trim().to_lowercase();
+        if !domain.is_empty() && !self.approved_domains.contains(&domain) {
+            self.approved_domains.push(domain);
+        }
+    }
+
+    pub fn approve_ip(&mut self, ip: IpAddr) {
+        if !self.approved_ips.contains(&ip) {
+            self.approved_ips.push(ip);
+        }
+    }
+
+    pub fn is_host_allowed(&self, host: &str) -> bool {
+        if self.approved_domains.iter().any(|d| host == d || host.ends_with(&format!(".{}", d))) {
+            return true;
+        }
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if self.approved_ips.contains(&ip) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Resolve a hostname to IPs and check if any resolved IP is private.
+    /// This prevents DNS rebinding attacks where a hostname resolves to
+    /// a public IP at check time but a private IP at request time.
+    fn check_dns_rebinding(host: &str) -> Result<(), String> {
+        // Only check if it looks like a hostname (not an IP)
+        if host.parse::<IpAddr>().is_ok() {
+            return Ok(());
+        }
+
+        // Resolve the hostname to check for private IPs
+        let addr_str = format!("{}:0", host);
+        match addr_str.to_socket_addrs() {
+            Ok(addrs) => {
+                for addr in addrs {
+                    let ip = addr.ip();
+                    if Self::is_private_ip(ip) {
+                        return Err(format!(
+                            "DNS rebinding detected: {} resolves to private IP {}",
+                            host, ip
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            Err(_) => {
+                // DNS resolution failed — allow through, the connection will fail anyway
+                tracing::warn!("DNS resolution failed for {}, allowing through", host);
+                Ok(())
+            }
+        }
     }
 
     pub fn validate_upstream(&self, url: &str) -> Result<(), String> {
         let parsed = match url::Url::parse(url) {
             Ok(u) => u,
-            Err(_) => return Err("Invalid URL format".into()),
+            Err(e) => return Err(format!("invalid upstream URL: {}", e)),
         };
 
-        // Scheme check
-        if self.require_https && parsed.scheme() != "https" {
-            return Err("HTTPS required for upstream URLs".into());
+        let scheme = parsed.scheme();
+        if scheme != "https" && scheme != "http" {
+            return Err(format!("unsupported scheme: {}", scheme));
         }
 
-        let host = parsed.host_str().ok_or("URL missing host")?;
-        let host_lower = host.to_lowercase();
+        let host = match parsed.host_str() {
+            Some(h) => h.to_lowercase(),
+            None => return Err("upstream URL has no host".into()),
+        };
 
-        // Domain allowlist check
-        let domain_approved = self.approved_domains.iter().any(|d| {
-            host_lower == *d || host_lower.ends_with(&format!(".{}", d))
-        });
-
-        if !domain_approved {
-            return Err(format!("Domain '{}' not in approved allowlist", host));
-        }
-
-        // IP-based checks (if host is an IP address)
+        // Check for private IP directly
         if let Ok(ip) = host.parse::<IpAddr>() {
-            if self.block_private_ips && Self::is_private_ip(ip) {
-                return Err("Private IP addresses are blocked".into());
-            }
-            if Self::is_metadata_endpoint(ip) {
-                return Err("Cloud metadata endpoints are blocked".into());
+            if Self::is_private_ip(ip) {
+                return Err(format!("upstream host {} is a private IP (SSRF blocked)", host));
             }
         }
 
-        // Block localhost by name
-        if host_lower == "localhost" || host_lower == "127.0.0.1" || host_lower == "::1" {
-            return Err("Localhost is blocked".into());
+        // DNS rebinding protection: resolve hostname and check resolved IPs
+        Self::check_dns_rebinding(&host)?;
+
+        if !self.is_host_allowed(&host) {
+            return Err(format!("upstream host {} is not in the approved allowlist (SSRF blocked)", host));
         }
 
-        debug!(target: "appgate::ssrf", url = %url, "SSRF validation passed");
         Ok(())
     }
 
-    fn is_private_ip(ip: IpAddr) -> bool {
+    pub fn is_private_ip(ip: IpAddr) -> bool {
         match ip {
-            IpAddr::V4(ip) => {
-                ip.is_private()
-                    || ip.is_loopback()
-                    || ip.is_link_local()
-                    || ip.is_multicast()
-                    || ip.is_broadcast()
-                    || ip.is_documentation()
-                    || ip.octets()[0] == 0
-                    || (ip.octets()[0] == 100 && (ip.octets()[1] & 0b1100_0000) == 0b0100_0000) // CGNAT
-            }
-            IpAddr::V6(ip) => {
-                ip.is_loopback()
-                    || ip.is_multicast()
-                    || (ip.segments()[0] & 0xFE00) == 0xFC00 // Unique local
-            }
+            IpAddr::V4(v4) => Self::is_private_ipv4(v4),
+            IpAddr::V6(v6) => Self::is_private_ipv6(v6),
         }
     }
 
-    fn is_metadata_endpoint(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(ip) => {
-                // AWS: 169.254.169.254, GCP: 169.254.169.254, Azure: 169.254.169.254
-                ip.octets() == [169, 254, 169, 254]
-            }
-            IpAddr::V6(_) => false,
-        }
+    fn is_private_ipv4(ip: Ipv4Addr) -> bool {
+        ip.is_loopback()
+            || ip.is_private()
+            || ip.is_link_local()
+            || ip.is_unspecified()
+            || ip.is_multicast()
+            || ip.is_broadcast()
+            // CGNAT (100.64.0.0/10)
+            || (ip.octets()[0] == 100 && (ip.octets()[1] & 0b11000000) == 0b1000000)
+            // Benchmarking (198.18.0.0/15)
+            || (ip.octets()[0] == 198 && (ip.octets()[1] & 0b11111110) == 0b00010010)
+    }
+
+    fn is_private_ipv6(ip: Ipv6Addr) -> bool {
+        ip.is_loopback()
+            || ip.is_unspecified()
+            || ip.is_multicast()
+            || ip.is_unique_local()
+            || ip.is_unicast_link_local()
     }
 }

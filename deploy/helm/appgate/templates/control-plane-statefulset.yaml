@@ -1,5 +1,6 @@
+{{- if .Values.controlPlane.statefulSet.enabled }}
 # =============================================================================
-# AppGate — Control Plane StatefulSet
+# AppGate — Control Plane StatefulSet (optional, for stateful deployments)
 # =============================================================================
 apiVersion: apps/v1
 kind: StatefulSet
@@ -30,23 +31,19 @@ spec:
       serviceAccountName: {{ include "appgate.fullname" . }}-control-plane
       securityContext:
         runAsNonRoot: true
-        runAsUser: {{ .Values.controlPlane.securityContext.runAsUser | default 65532 }}
-        runAsGroup: {{ .Values.controlPlane.securityContext.runAsGroup | default 65532 }}
-        fsGroup: {{ .Values.controlPlane.securityContext.fsGroup | default 65532 }}
+        runAsUser: {{ .Values.controlPlane.securityContext.runAsUser | default 65534 }}
+        runAsGroup: {{ .Values.controlPlane.securityContext.runAsGroup | default 65534 }}
+        fsGroup: {{ .Values.controlPlane.securityContext.fsGroup | default 65534 }}
         seccompProfile:
           type: {{ .Values.controlPlane.securityContext.seccompProfile.type | default "RuntimeDefault" }}
-      {{- with .Values.controlPlane.topologySpreadConstraints }}
-      topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: control-plane
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy | default "IfNotPresent" }}
           securityContext:
             runAsNonRoot: {{ .Values.controlPlane.securityContext.runAsNonRoot | default true }}
-            runAsUser: {{ .Values.controlPlane.securityContext.runAsUser | default 65532 }}
-            runAsGroup: {{ .Values.controlPlane.securityContext.runAsGroup | default 65532 }}
+            runAsUser: {{ .Values.controlPlane.securityContext.runAsUser | default 65534 }}
+            runAsGroup: {{ .Values.controlPlane.securityContext.runAsGroup | default 65534 }}
             readOnlyRootFilesystem: {{ .Values.controlPlane.securityContext.readOnlyRootFilesystem | default true }}
             capabilities:
               drop: ["ALL"]
@@ -60,25 +57,37 @@ spec:
             - containerPort: {{ .Values.controlPlane.service.metricsPort | default 9090 }}
               name: metrics
               protocol: TCP
-          {{- with .Values.controlPlane.env }}
           env:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.controlPlane.envFrom }}
+            {{- toYaml .Values.controlPlane.env | nindent 12 }}
           envFrom:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.controlPlane.volumeMounts }}
+            {{- toYaml .Values.controlPlane.envFrom | nindent 12 }}
           volumeMounts:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- toYaml .Values.controlPlane.volumeMounts | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
-            {{- toYaml .Values.controlPlane.probes.liveness | default (dict "httpGet" (dict "path" "/healthz" "port" 8080) "initialDelaySeconds" 10 "periodSeconds" 10) | nindent 12 }}
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
-            {{- toYaml .Values.controlPlane.probes.readiness | default (dict "httpGet" (dict "path" "/readyz" "port" 8080) "initialDelaySeconds" 5 "periodSeconds" 5) | nindent 12 }}
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.controlPlane.resources | default (dict "requests" (dict "cpu" "250m" "memory" "256Mi") "limits" (dict "cpu" "1" "memory" "512Mi")) | nindent 12 }}
-      {{- with .Values.controlPlane.volumes }}
       volumes:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- toYaml .Values.controlPlane.volumes | nindent 8 }}
+{{- end }}

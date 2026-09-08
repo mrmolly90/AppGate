@@ -2,196 +2,201 @@ package auth
 
 import (
 	"context"
-	"crypto/rsa"
-	"fmt"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
+	"go.uber.org/zap"
 )
 
-// JWTService handles JWT creation and validation.
-type JWTService struct {
-	signingKey   *rsa.PrivateKey
-	verifyingKey *rsa.PublicKey
-	issuer       string
-	audience     string
-	allowedAlgs  []string
-	clockSkew    time.Duration
-}
+type contextKey string
 
-// NewJWTService creates a new JWT service with secure defaults.
-func NewJWTService(signingKey *rsa.PrivateKey, issuer, audience string) *JWTService {
-	return &JWTService{
-		signingKey:   signingKey,
-		verifyingKey: &signingKey.PublicKey,
-		issuer:       issuer,
-		audience:     audience,
-		allowedAlgs:  []string{"RS256", "ES256"},
-		clockSkew:    30 * time.Second,
-	}
-}
+const (
+	// IdentityKey is the context key for the authenticated identity.
+	IdentityKey contextKey = "identity"
+	// RolesKey is the context key for the authenticated roles.
+	RolesKey contextKey = "roles"
+)
 
-// Claims represents the JWT claims for AppGate.
+// Claims represents standard JWT claims.
 type Claims struct {
-	jwt.RegisteredClaims
-	Roles    []string          `json:"roles"`
-	Scope    string            `json:"scope"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Sub   string   `json:"sub"`
+	Exp   int64    `json:"exp"`
+	Iat   int64    `json:"iat"`
+	Roles []string `json:"roles,omitempty"`
 }
 
-// CreateToken generates a signed JWT for a given identity.
-func (s *JWTService) CreateToken(identityID string, roles []string, scope string, ttl time.Duration) (string, error) {
-	now := time.Now().UTC()
-
-	claims := &Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        uuid.New().String(),
-			Issuer:    s.issuer,
-			Audience:  jwt.ClaimStrings{s.audience},
-			Subject:   identityID,
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now.Add(-s.clockSkew)),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-		},
-		Roles: roles,
-		Scope: scope,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "appgate-signing-key-v1"
-
-	signed, err := token.SignedString(s.signingKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign token: %w", err)
-	}
-
-	return signed, nil
+// Middleware provides JWT-based authentication for the control plane API.
+type Middleware struct {
+	logger    *zap.SugaredLogger
+	secret    string
+	skipPaths map[string]bool
 }
 
-// ValidateToken validates a JWT and returns the claims.
-func (s *JWTService) ValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Algorithm check: prevent algorithm confusion
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			// Also check ECDSA
-			if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-		}
-
-		// Verify algorithm is in allowlist
-		alg, ok := token.Header["alg"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing algorithm header")
-		}
-
-		allowed := false
-		for _, a := range s.allowedAlgs {
-			if alg == a {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return nil, fmt.Errorf("signing algorithm %s not allowed", alg)
-		}
-
-		return s.verifyingKey, nil
-	},
-		// Validation options
-		jwt.WithIssuer(s.issuer),
-		jwt.WithAudience(s.audience),
-		jwt.WithValidMethods(s.allowedAlgs),
-		jwt.WithLeeway(s.clockSkew),
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("token validation failed: %w", err)
+// NewMiddleware creates a new auth middleware.
+func NewMiddleware(logger *zap.SugaredLogger) *Middleware {
+	secret := getEnv("APPGATE_JWT_SECRET", "")
+	if secret == "" {
+		logger.Warn("APPGATE_JWT_SECRET not set, generating ephemeral secret - all tokens will be invalidated on restart")
+		secret = generateEphemeralSecret()
 	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, fmt.Errorf("invalid token claims")
+	return &Middleware{
+		logger:    logger,
+		secret:    secret,
+		skipPaths: map[string]bool{"/healthz": true, "/readyz": true, "/metrics": true},
 	}
-
-	return claims, nil
 }
 
-// Middleware provides HTTP middleware for JWT validation.
-func (s *JWTService) Middleware(next http.Handler) http.Handler {
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// generateEphemeralSecret creates a random 256-bit secret for JWT signing.
+// NOTE: This means all sessions are invalidated on restart.
+// For production, always set APPGATE_JWT_SECRET.
+func generateEphemeralSecret() string {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		panic("failed to generate ephemeral JWT secret: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(buf)
+}
+
+// Middleware is an HTTP middleware that validates Bearer tokens.
+func (m *Middleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip auth for health and metrics endpoints
+		if m.skipPaths[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-			http.Error(w, `{"error":"invalid authorization header format"}`, http.StatusUnauthorized)
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token == authHeader {
+			http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
 			return
 		}
 
-		claims, err := s.ValidateToken(parts[1])
+		// Validate JWT with HMAC-SHA256
+		claims, err := m.validateToken(token)
 		if err != nil {
-			log.Warn().Err(err).Msg("JWT validation failed")
-			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			m.logger.Warnw("JWT validation failed", "error", err)
+			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 			return
 		}
 
-		// Set claims in context
-		ctx := contextWithClaims(r.Context(), claims)
+		ctx := context.WithValue(r.Context(), IdentityKey, claims.Sub)
+		ctx = context.WithValue(ctx, RolesKey, claims.Roles)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// RequireRole returns middleware that checks for a required role.
-func RequireRole(role string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			claims, ok := claimsFromContext(r.Context())
-			if !ok {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusForbidden)
-				return
-			}
-
-			hasRole := false
-			for _, r := range claims.Roles {
-				if r == role {
-					hasRole = true
-					break
-				}
-			}
-
-			if !hasRole {
-				log.Warn().Str("identity", claims.Subject).Str("required_role", role).Msg("authorization denied")
-				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
+// validateToken validates a JWT token using HMAC-SHA256.
+func (m *Middleware) validateToken(token string) (*Claims, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, ErrMalformedToken
 	}
+
+	// Decode header
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, ErrMalformedToken
+	}
+	var header struct {
+		Alg string `json:"alg"`
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, ErrMalformedToken
+	}
+	if header.Alg != "HS256" {
+		return nil, ErrUnsupportedAlgorithm
+	}
+
+	// Verify signature
+	signingInput := parts[0] + "." + parts[1]
+	mac := hmac.New(sha256.New, []byte(m.secret))
+	mac.Write([]byte(signingInput))
+	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(parts[2]), []byte(expectedSig)) {
+		return nil, ErrInvalidSignature
+	}
+
+	// Decode claims
+	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, ErrMalformedToken
+	}
+	var claims Claims
+	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
+		return nil, ErrMalformedToken
+	}
+
+	// Validate expiration
+	if claims.Exp > 0 && time.Now().Unix() > claims.Exp {
+		return nil, ErrTokenExpired
+	}
+
+	// Validate issued-at
+	if claims.Iat > 0 && time.Now().Unix() < claims.Iat-300 {
+		return nil, ErrTokenNotYetValid
+	}
+
+	if claims.Sub == "" {
+		return nil, ErrMissingSubject
+	}
+
+	return &claims, nil
 }
 
-// Context key type to avoid collisionss
-const claimsKey contextKey = "claims"
-
-func contextWithClaims(ctx context.Context, claims *Claims) context.Context {
-	return context.WithValue(ctx, claimsKey, claims)
+// GetIdentity extracts the authenticated identity from the request context.
+func GetIdentity(r *http.Request) string {
+	if id, ok := r.Context().Value(IdentityKey).(string); ok {
+		return id
+	}
+	return "anonymous"
 }
 
-// ClaimsFromContext retrieves JWT claims from the request context.
-// Returns nil, false if no claims are present.
-func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
-	return claimsFromContext(ctx)
+// GetRoles extracts the authenticated roles from the request context.
+func GetRoles(r *http.Request) []string {
+	if roles, ok := r.Context().Value(RolesKey).([]string); ok {
+		return roles
+	}
+	return []string{}
 }
 
-func claimsFromContext(ctx context.Context) (*Claims, bool) {
-	claims, ok := ctx.Value(claimsKey).(*Claims)
-	return claims, ok
+// Error types for JWT validation.
+var (
+	ErrMalformedToken       = &AuthError{"malformed_token", "Token is malformed"}
+	ErrUnsupportedAlgorithm = &AuthError{"unsupported_algorithm", "Only HS256 is supported"}
+	ErrInvalidSignature     = &AuthError{"invalid_signature", "Token signature is invalid"}
+	ErrTokenExpired         = &AuthError{"token_expired", "Token has expired"}
+	ErrTokenNotYetValid     = &AuthError{"token_not_yet_valid", "Token is not yet valid"}
+	ErrMissingSubject       = &AuthError{"missing_subject", "Token is missing subject claim"}
+)
+
+// AuthError represents a structured authentication error.
+type AuthError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *AuthError) Error() string {
+	return e.Code + ": " + e.Message
 }

@@ -19,13 +19,16 @@ spec:
         ports:
         - containerPort: 6379
         command: ["redis-server"]
-        args: ["--requirepass", "$(REDIS_PASSWORD)"]
+        args: ["--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes", "--save", "900 1", "--save", "300 10"]
         env:
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: appgate-secrets
               key: redis-password
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
         resources:
           requests:
             memory: "64Mi"
@@ -33,6 +36,23 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "250m"
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: appgate-redis-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: appgate-redis-pvc
+  namespace: appgate-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: gp2
 ---
 apiVersion: v1
 kind: Service

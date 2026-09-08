@@ -1,10 +1,10 @@
 ﻿apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: appgate-control-plane
+  name: appgate-gateway
   namespace: appgate-system
 spec:
   minAvailable: 2
   selector:
     matchLabels:
-      app: appgate-control-plane
+      app: appgate-gateway

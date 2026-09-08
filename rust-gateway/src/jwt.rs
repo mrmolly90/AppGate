@@ -1,78 +1,57 @@
-use std::collections::HashSet;
-// =============================================================================
-// AppGate Gateway — JWT Authentication
-// =============================================================================
-//
-// Validates JWT tokens using RSA public keys loaded from PEM files.
-// Supports RS256 and ES256 algorithms with configurable leeway.
-// =============================================================================
+//! AppGate Gateway — JWT Authentication
 
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, TokenData, Validation};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use tracing::debug;
 
-
-/// Claims extracted from a validated JWT
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidatedToken {
-    /// Identity ID (sub claim)
-    pub identity_id: String,
-    /// Roles assigned to the identity
-    pub roles: Vec<String>,
-    /// Scope of access
-    pub scope: String,
-    /// Token ID (jti claim)
-    pub token_id: String,
-}
-
-/// JWT claims structure matching the control plane's token format
 #[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    iss: String,
-    aud: String,
-    exp: usize,
-    iat: usize,
-    jti: String,
-    roles: Vec<String>,
-    scope: String,
+pub struct Claims {
+    pub sub: String,
+    pub iss: String,
+    pub aud: String,
+    pub exp: usize,
+    pub iat: usize,
 }
 
-/// JWT Validator with key caching
 pub struct JwtValidator {
     decoding_key: DecodingKey,
     validation: Validation,
 }
 
 impl JwtValidator {
-    /// Create a new JWT validator from a PEM-encoded public key.
-    ///
-    /// # Arguments
-    /// * `key_path` - Path to the PEM-encoded RSA public key
-    /// * `issuer` - Expected JWT issuer
-    /// * `audience` - Expected JWT audience
-    ///
-    /// # Errors
-    /// Returns an error if the key file cannot be read or parsed.
-    pub fn new(key_path: &str, issuer: &str, audience: &str) -> anyhow::Result<Self> {
-        let key_pem = fs::read_to_string(key_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read JWT key file: {e}"))?;
+    pub fn new(config: &crate::config::JwtConfig) -> anyhow::Result<Self> {
+        let issuer = config.issuer.clone()
+            .unwrap_or_else(|| "appgate".to_string());
+        let audience = config.audience.clone()
+            .unwrap_or_else(|| "appgate-gateway".to_string());
 
-        let decoding_key = DecodingKey::from_rsa_pem(key_pem.as_bytes())
-            .map_err(|e| anyhow::anyhow!("Failed to parse RSA public key: {e}"))?;
+        // Prefer a PEM key file when configured; otherwise use JWKS URL
+        if let Some(key_path) = &config.key_path {
+            let pem = std::fs::read(key_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read JWT public key {}: {e}", key_path))?;
+            return Self::from_pem(&pem, &issuer, &audience);
+        }
 
-        let mut validation = Validation::new(Algorithm::RS256);
+        if let Some(jwks_url) = &config.jwks_url {
+            anyhow::bail!("JWKS loading from {} is not supported in this build (auto-start disabled); configure APPGATE_JWT_KEY_PATH with the PEM public key", jwks_url);
+        }
+
+        anyhow::bail!(
+            "no JWT key source configured (set APPGATE_JWT_KEY_PATH or APPGATE_JWT_JWKS_URL)"
+        )
+    }
+
+    pub fn from_pem(pem: &[u8], issuer: &str, audience: &str) -> anyhow::Result<Self> {
+        let decoding_key = DecodingKey::from_ed_pem(pem)
+            .or_else(|_| DecodingKey::from_rsa_pem(pem))
+            .or_else(|_| DecodingKey::from_ec_pem(pem))
+            .map_err(|e| anyhow::anyhow!("Unsupported PEM format: {e}"))?;
+
+        let mut validation = Validation::new(Algorithm::EdDSA);
         validation.set_issuer(&[issuer]);
         validation.set_audience(&[audience]);
-        validation.leeway = 30; // 30 seconds clock skew tolerance
-validation.required_spec_claims = HashSet::from([
-    "sub".to_string(), 
-    "exp".to_string(), 
-    "iat".to_string(), 
-    "jti".to_string(), 
-    "roles".to_string(), 
-    "scope".to_string()
-]);
+        validation.validate_exp = true;
+        validation.validate_nbf = false;
 
         Ok(Self {
             decoding_key,
@@ -80,21 +59,9 @@ validation.required_spec_claims = HashSet::from([
         })
     }
 
-    /// Validate a JWT token and extract claims.
-    ///
-    /// # Arguments
-    /// * `token` - The JWT string to validate
-    ///
-    /// # Returns
-    /// `ValidatedToken` with extracted claims, or an error.
-    pub fn validate(&self, token: &str) -> anyhow::Result<ValidatedToken> {
-        let token_data = decode::<Claims>(token, &self.decoding_key, &self.validation)?;
-
-        Ok(ValidatedToken {
-            identity_id: token_data.claims.sub,
-            roles: token_data.claims.roles,
-            scope: token_data.claims.scope,
-            token_id: token_data.claims.jti,
-        })
+    pub fn validate(&self, token: &str) -> anyhow::Result<TokenData<Claims>> {
+        debug!("Validating JWT token");
+        decode::<Claims>(token, &self.decoding_key, &self.validation)
+            .map_err(|e| anyhow::anyhow!("JWT validation failed: {e}"))
     }
 }

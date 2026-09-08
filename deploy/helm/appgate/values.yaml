@@ -1,304 +1,121 @@
-# AppGate Helm Values
-# Default values for production deployment
-# Every .Values.x reference has a default value to prevent nil pointer errors.
+# AppGate Helm Chart — Default Values
+# =============================================================================
+# Override per environment in values-dev.yaml, values-staging.yaml, values-production.yaml
+# =============================================================================
 
-# ── Global ────────────────────────────────────────────────────────
+# ── Global Settings ────────────────────────────────────────────────────────────
 global:
-  environment: "production"
-  imageRegistry: ""
-  imagePullSecrets: []
-  labels: {}
+  environment: production
+  imagePullPolicy: Always
+  imageRegistry: ghcr.io/mrmolly90
 
-# ── Flagger (optional) ────────────────────────────────────────────
-flagger:
-  enabled: false
-
-# ── Control Plane ─────────────────────────────────────────────────
+# ── Control Plane ─────────────────────────────────────────────────────────────
 controlPlane:
   name: appgate-control-plane
-  replicas: 3
-  logLevel: info
-  jwtIssuer: appgate-control-plane
-  jwtAudience: appgate-gateway
-  databaseSecret: appgate-database
-  signingKeySecret: appgate-signing-key
-
+  statefulSet:
+    enabled: false
   image:
     repository: ghcr.io/mrmolly90/appgate-control-plane
-    tag: ""
-    pullPolicy: IfNotPresent
-    digest: ""
-
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 65532
-    runAsGroup: 65532
-    readOnlyRootFilesystem: true
-    capabilities:
-      drop: ["ALL"]
-    allowPrivilegeEscalation: false
-    seccompProfile:
-      type: RuntimeDefault
-
-  podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 65532
-    runAsGroup: 65532
-    fsGroup: 65532
-    seccompProfile:
-      type: RuntimeDefault
-
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: 1000m
-      memory: 512Mi
-
-  hpa:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-
-  pdb:
-    enabled: true
-    minAvailable: 2
-
+    tag: latest
+  replicas: 3
   service:
     type: ClusterIP
     port: 8080
     metricsPort: 9090
-
-  probes:
-    liveness:
-      httpGet:
-        path: /healthz
-        port: 8080
-      initialDelaySeconds: 10
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
-    readiness:
-      httpGet:
-        path: /readyz
-        port: 8080
-      initialDelaySeconds: 5
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 2
-
-  topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: topology.kubernetes.io/zone
-      whenUnsatisfiable: DoNotSchedule
-      labelSelector:
-        matchLabels:
-          app.kubernetes.io/component: control-plane
-
-  env:
-    - name: APPGATE_HTTP_PORT
-      value: "8080"
-    - name: APPGATE_LOG_LEVEL
-      value: "info"
-    - name: APPGATE_OTLP_ENDPOINT
-      value: "http://otel-collector.appgate-observability:4317"
-
-  envFrom:
-    - configMapRef:
-        name: appgate-control-plane-config
-
-  volumes:
-    - name: signing-key
-      secret:
-        secretName: appgate-control-plane-signing-key
-
-  volumeMounts:
-    - name: signing-key
-      mountPath: /etc/appgate/keys
-      readOnly: true
-
-  ingress:
-    enabled: false
-    className: ""
-    annotations: {}
-    hosts:
-      - host: control-plane.appgate.local
-        paths:
-          - path: /
-            pathType: Prefix
-
-# ── Gateway ───────────────────────────────────────────────────────
-gateway:
-  name: appgate-gateway
-  replicas: 3
-  logLevel: appgate_gateway=info
-  otelEndpoint: http://otel-collector:4317
-  verifyingKeySecret: appgate-verifying-key
-
-  image:
-    repository: ghcr.io/mrmolly90/appgate-gateway
-    tag: ""
-    pullPolicy: IfNotPresent
-    digest: ""
-
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 65532
-    runAsGroup: 65532
-    readOnlyRootFilesystem: true
-    capabilities:
-      drop: ["ALL"]
-    allowPrivilegeEscalation: false
-    seccompProfile:
-      type: RuntimeDefault
-
-  podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 65532
-    runAsGroup: 65532
-    fsGroup: 65532
-    seccompProfile:
-      type: RuntimeDefault
-
   resources:
     requests:
-      cpu: 500m
-      memory: 512Mi
+      memory: 256Mi
+      cpu: 250m
     limits:
-      cpu: 2000m
-      memory: 1Gi
+      memory: 512Mi
+      cpu: 1000m
+  env:
+    - name: APPGATE_LOG_LEVEL
+      value: info
+    - name: APPGATE_LOG_FORMAT
+      value: json
+    - name: APPGATE_SERVER_PORT
+      value: "8080"
+    - name: APPGATE_METRICS_PORT
+      value: "9090"
+    - name: APPGATE_GRPC_ADDR
+      value: ":9091"
 
-  hpa:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 20
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-    customMetrics:
-      - type: Pods
-        pods:
-          metric:
-            name: gateway_connections_active
-          target:
-            type: AverageValue
-            averageValue: 10000
-
-  pdb:
-    enabled: true
-    minAvailable: 2
-
+# ── Gateway ───────────────────────────────────────────────────────────────────
+gateway:
+  name: appgate-gateway
+  image:
+    repository: ghcr.io/mrmolly90/appgate-gateway
+    tag: latest
+  replicas: 3
   service:
     type: LoadBalancer
     port: 443
-    targetPort: 8443
+    targetPort: 8080
     metricsPort: 9090
-    annotations:
-      service.beta.kubernetes.io/aws-load-balancer-type: nlb
-
-  probes:
-    liveness:
-      httpGet:
-        path: /healthz
-        port: 8443
-        scheme: HTTPS
-      initialDelaySeconds: 10
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
-    readiness:
-      httpGet:
-        path: /readyz
-        port: 8443
-        scheme: HTTPS
-      initialDelaySeconds: 5
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 2
-
-  topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: topology.kubernetes.io/zone
-      whenUnsatisfiable: DoNotSchedule
-      labelSelector:
-        matchLabels:
-          app.kubernetes.io/component: gateway
-
-  args:
-    - --listen-addr=0.0.0.0
-    - --listen-port=8443
-    - --control-plane-url=http://appgate-control-plane:8080
-    - --tls-cert-path=/etc/appgate/tls/cert.pem
-    - --tls-key-path=/etc/appgate/tls/key.pem
-    - --jwt-key-path=/etc/appgate/jwt/verify.pem
-    - --otlp-endpoint=http://otel-collector.appgate-observability:4317
-
+    annotations: {}
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 500m
+    limits:
+      memory: 1Gi
+      cpu: 2000m
   env:
     - name: RUST_LOG
-      value: "appgate=info,warn"
-    - name: RUST_BACKTRACE
-      value: "0"
+      value: appgate=info,warn
+    - name: APPGATE_BIND_ADDR
+      value: "0.0.0.0"
+    - name: APPGATE_PORT
+      value: "8080"
+    - name: APPGATE_CONTROL_PLANE_URL
+      value: "http://appgate-control-plane:8080"
+    - name: APPGATE_LOG_LEVEL
+      value: info
+    - name: APPGATE_RATE_LIMIT_ENABLED
+      value: "true"
+    - name: APPGATE_RATE_LIMIT_REQUESTS_PER_SECOND
+      value: "10000"
+    - name: APPGATE_RATE_LIMIT_BURST_SIZE
+      value: "20000"
+    - name: APPGATE_ENVIRONMENT
+      value: production
 
-  volumes:
-    - name: tls
-      secret:
-        secretName: appgate-gateway-tls
-    - name: jwt-key
-      secret:
-        secretName: appgate-gateway-jwt-key
-
-  volumeMounts:
-    - name: tls
-      mountPath: /etc/appgate/tls
-      readOnly: true
-    - name: jwt-key
-      mountPath: /etc/appgate/jwt
-      readOnly: true
-
-  ingress:
-    enabled: false
-    className: ""
-    annotations: {}
-    hosts:
-      - host: gateway.appgate.local
-        paths:
-          - path: /
-            pathType: Prefix
-
-# ── Monitoring ────────────────────────────────────────────────────
-prometheus:
+# ── Database ──────────────────────────────────────────────────────────────────
+postgresql:
   enabled: true
+  image: postgres:15-alpine
+  storage: 10Gi
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 1000m
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  storage: 5Gi
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+monitoring:
   prometheus:
-    prometheusSpec:
-      ruleSelectorNilUsesHelmValues: false
-      serviceMonitorSelectorNilUsesHelmValues: false
+    enabled: true
+  grafana:
+    enabled: true
+    adminPassword: ""
+  otel:
+    enabled: true
 
-grafana:
-  enabled: true
-  dashboardProviders:
-    dashboardproviders.yaml:
-      apiVersion: 1
-      providers:
-        - name: appgate
-          orgId: 1
-          folder: AppGate
-          type: file
-          disableDeletion: false
-          editable: true
-          options:
-            path: /var/lib/grafana/dashboards/appgate
-  dashboardsConfigMaps:
-    appgate: appgate-grafana-dashboards
-
-# ── Cert-Manager ──────────────────────────────────────────────────
+# ── Certificates ──────────────────────────────────────────────────────────────
 certManager:
   enabled: false
   issuer:
     name: appgate-issuer
     kind: ClusterIssuer
-    email: admin@appgate.local
-  certificate:
-    duration: 8760h
-    renewBefore: 360h
+
+# ── Canary / Flagger ─────────────────────────────────────────────────────────
+flagger:
+  enabled: false

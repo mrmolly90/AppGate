@@ -1,125 +1,93 @@
-// =============================================================================
-// AppGate Gateway — Audit Logger (Production)
-// =============================================================================
-//
-// Records structured audit events to:
-//   • stdout (structured JSON) for log aggregation
-//   • Optional async batch buffer for control plane forwarding
-// =============================================================================
+use serde::Serialize;
+use tokio::sync::mpsc;
+use tracing::debug;
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use tracing::info;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AuditEvent {
     pub event_type: String,
-    pub event_time: String,
-    pub severity: u8,
-    pub actor: Actor,
-    pub action: Action,
-    pub resource: Resource,
-    pub result: ResultDetails,
+    pub actor_id: String,
+    pub action: String,
+    pub resource: String,
+    pub result: String,
     pub correlation_id: String,
-    pub metadata: HashMap<String, String>,
+    pub source: String,
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Actor {
-    pub id: String,
-    pub type_: String,
-    pub roles: Vec<String>,
-    pub tenant_id: Option<String>,
+pub struct AuditLogger {
+    sender: mpsc::UnboundedSender<AuditEvent>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Action {
-    pub name: String,
-    pub type_: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Resource {
-    pub type_: String,
-    pub name: String,
-    pub provider: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ResultDetails {
-    pub status: String,
-    pub reason: String,
-    pub policy_id: Option<String>,
-}
-
-pub struct AuditLogger;
 
 impl AuditLogger {
-    pub fn new() -> Self {
-        Self
-    }
+    pub fn new(control_plane_url: String, audit_endpoint: Option<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
 
-    /// Record an audit event to stdout (structured JSON)
-    pub fn record(&self, event: AuditEvent) {
-        match serde_json::to_string(&event) {
-            Ok(json) => {
-                info!(
-                    target: "appgate::audit",
-                    event_type = %event.event_type,
-                    correlation_id = %event.correlation_id,
-                    actor_id = %event.actor.id,
-                    action = %event.action.name,
-                    resource = %event.resource.name,
-                    result = %event.result.status,
-                    severity = %event.severity,
-                    "{}",
-                    json
-                );
+        let (sender, mut receiver) = mpsc::unbounded_channel::<AuditEvent>();
+        let endpoint = audit_endpoint.unwrap_or_else(|| {
+            let base = control_plane_url.trim_end_matches('/');
+            format!("{}/v1/audit/batch", base)
+        });
+        let client_clone = client.clone();
+
+        tokio::spawn(async move {
+            let mut batch = Vec::with_capacity(100);
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+
+            loop {
+                tokio::select! {
+                    Some(event) = receiver.recv() => {
+                        batch.push(event);
+                        if batch.len() >= 100 {
+                            Self::send_batch(&client_clone, &endpoint, &batch).await;
+                            batch.clear();
+                        }
+                    }
+                    _ = interval.tick() => {
+                        if !batch.is_empty() {
+                            Self::send_batch(&client_clone, &endpoint, &batch).await;
+                            batch.clear();
+                        }
+                    }
+                    else => break,
+                }
             }
-            Err(e) => {
-                tracing::error!(target: "appgate::audit", error = %e, "Failed to serialize audit event");
-            }
+        });
+
+        Self {
+            sender,
         }
     }
 
-    /// Convenience builder for proxy request events
-    pub fn proxy_request(
-        &self,
-        request_id: &str,
-        actor_id: &str,
-        provider: &str,
-        model: &str,
-        status: &str,
-    ) {
-        let event = AuditEvent {
-            event_type: "proxy_request".into(),
-            event_time: chrono::Utc::now().to_rfc3339(),
-            severity: if status == "denied" { 7 } else { 3 },
-            actor: Actor {
-                id: actor_id.into(),
-                type_: "service_account".into(),
-                roles: vec![],
-                tenant_id: None,
-            },
-            action: Action {
-                name: "forward".into(),
-                type_: "llm_proxy".into(),
-            },
-            resource: Resource {
-                type_: "llm_api".into(),
-                name: format!("{}/{}", provider, model),
-                provider: provider.into(),
-                model: model.into(),
-            },
-            result: ResultDetails {
-                status: status.into(),
-                reason: "".into(),
-                policy_id: None,
-            },
-            correlation_id: request_id.into(),
-            metadata: HashMap::new(),
-        };
-        self.record(event);
+    pub fn record(&self, event: AuditEvent) {
+        debug!(
+            event_type = %event.event_type,
+            actor_id = %event.actor_id,
+            action = %event.action,
+            result = %event.result,
+            "audit event"
+        );
+
+        if let Err(e) = self.sender.send(event) {
+            tracing::warn!(error = %e, "audit channel closed, dropping event");
+        }
+    }
+
+    async fn send_batch(client: &reqwest::Client, url: &str, batch: &[AuditEvent]) {
+        if batch.is_empty() {
+            return;
+        }
+        match client.post(url).json(batch).send().await {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    tracing::warn!(status = %resp.status(), "audit batch rejected by control plane");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to send audit batch to control plane");
+            }
+        }
     }
 }

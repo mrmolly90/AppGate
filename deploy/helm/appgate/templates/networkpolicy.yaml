@@ -1,25 +1,19 @@
-# =============================================================================
-# AppGate — Network Policies (Default Deny + Explicit Allowlist)
-# =============================================================================
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "appgate.fullname" . }}-default-deny
-  labels:
-    {{- include "appgate.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
     - Egress
 ---
-# ── Allow control plane traffic ───────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "appgate.fullname" . }}-control-plane
-  labels:
-    {{- include "appgate.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
     matchLabels:
@@ -44,39 +38,34 @@ spec:
           protocol: TCP
   egress:
     - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: database
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: etcd
+      ports:
+        - port: 2379
+          protocol: TCP
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: appgate-observability
       ports:
         - port: 4317
           protocol: TCP
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: gateway
-      ports:
-        - port: {{ .Values.gateway.service.targetPort | default 8443 }}
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
+        - port: 9090
           protocol: TCP
 ---
-# ── Allow gateway traffic ─────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "appgate.fullname" . }}-gateway
-  labels:
-    {{- include "appgate.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
     matchLabels:
@@ -87,6 +76,7 @@ spec:
   ingress:
     - from:
         - namespaceSelector: {}
+          podSelector: {}
       ports:
         - port: {{ .Values.gateway.service.targetPort | default 8443 }}
           protocol: TCP
@@ -113,25 +103,18 @@ spec:
         - port: 4317
           protocol: TCP
     - to:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Upstream providers only — explicitly enumerated
+    - to:
+        - namespaceSelector: {}
           podSelector:
             matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    # EXPLICIT LLM PROVIDER ALLOWLIST — Update with actual provider CIDRs
-    - to:
-        - ipBlock:
-            cidr: 104.18.0.0/16  # Cloudflare / OpenAI
-        - ipBlock:
-            cidr: 52.0.0.0/8     # AWS / Anthropic
-        - ipBlock:
-            cidr: 13.107.0.0/16  # Azure OpenAI
+              app.kubernetes.io/component: upstream-egress-allowed
       ports:
         - port: 443
           protocol: TCP

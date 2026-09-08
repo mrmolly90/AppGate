@@ -1,133 +1,108 @@
-﻿//! AppGate Gateway - Zero-trust LLM security gateway
-//!
-//! This crate provides the AppGate SDP Gateway, a high-performance
-//! zero-trust security gateway for LLM API access.
-// =============================================================================
-// AppGate Gateway — Main Entry Point
-// =============================================================================
+﻿use std::sync::Arc;
+use appgate_gateway::{
+    audit, cache, circuit_breaker, config, health, jwt, metrics,
+    policy, rate_limit, router, server, ssrf, AppState,
+};
+use tracing::info;
 
-#![deny(unsafe_code)]
-#![deny(missing_docs)]
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::must_use_candidate)]
-#![allow(dead_code)] // TODO: Remove when all modules are wired up
-
-use anyhow::Context;
-use clap::Parser;
-use std::net::SocketAddr;
-use tokio::runtime::{self, Runtime};
-
-mod metrics;
-mod server;
 mod telemetry;
-mod tls;
 
-#[cfg(feature = "audit")]
-mod audit;
-#[cfg(feature = "jwt-auth")]
-mod jwt;
-#[cfg(feature = "policy-engine")]
-mod policy;
-#[cfg(feature = "ratelimit")]
-mod rate_limit;
-#[cfg(feature = "ssrf-protection")]
-mod ssrf;
+#[tokio::main]
+async fn main() {
+    // Initialize structured JSON logging
+    let _guard = telemetry::init_tracing();
 
-/// AppGate SDP Gateway — Zero-trust security gateway
-#[derive(Parser, Debug, Clone)]
-#[command(name = "appgate-gateway", version, about)]
-pub struct Args {
-    /// Listen address
-    #[arg(long, default_value = "0.0.0.0")]
-    pub listen_addr: String,
-
-    /// Listen port
-    #[arg(long, default_value_t = 8443)]
-    pub listen_port: u16,
-
-    /// Control plane gRPC endpoint
-    #[arg(long, default_value = "http://control-plane:9090")]
-    pub control_plane_url: String,
-
-    /// TLS certificate path (PEM)
-    #[arg(long, default_value = "/etc/appgate/tls/cert.pem")]
-    pub tls_cert_path: String,
-
-    /// TLS private key path (PEM)
-    #[arg(long, default_value = "/etc/appgate/tls/key.pem")]
-    pub tls_key_path: String,
-
-    /// JWT verification key path (PEM)
-    #[arg(long, default_value = "/etc/appgate/jwt/verify.pem")]
-    pub jwt_key_path: String,
-
-    /// JWT expected issuer
-    #[arg(long, default_value = "https://appgate.example.com")]
-    pub jwt_issuer: String,
-
-    /// JWT expected audience
-    #[arg(long, default_value = "appgate-gateway")]
-    pub jwt_audience: String,
-
-    /// Number of tokio worker threads (0 = auto-detect)
-    #[arg(long, default_value_t = 0)]
-    pub worker_threads: usize,
-
-    /// OpenTelemetry endpoint
-    #[arg(long, default_value = "http://otel-collector:4317")]
-    pub otlp_endpoint: String,
-}
-
-fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-
-    // Build NUMA-aware tokio runtime
-    let runtime = build_runtime(args.worker_threads)?;
-
-    // Initialize tracing (OpenTelemetry)
-    let _tracing_guard = telemetry::init_tracer_provider(&args.otlp_endpoint);
-
-    // Start server
-    let addr = SocketAddr::new(
-        args.listen_addr.parse().context("Invalid listen address")?,
-        args.listen_port,
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "AppGate production gateway starting"
     );
 
-    tracing::info!(
-        target: "appgate::startup",
-        addr = %addr,
-        workers = runtime.metrics().num_workers(),
-        "Starting AppGate Gateway"
-    );
+    let cfg = Arc::new(config::GatewayConfig::from_env());
 
-    runtime.block_on(async move { server::run_server(addr, &args).await })
-}
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
-/// Build a NUMA-aware tokio multi-thread runtime.
-fn build_runtime(worker_threads: usize) -> anyhow::Result<Runtime> {
-    let thread_count = if worker_threads > 0 {
-        worker_threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
+    // Initialize JWT validator
+    let jwt_validator = match jwt::JwtValidator::from_config(&cfg.jwt) {
+        Ok(v) => Arc::new(v),
+        Err(e) => {
+            if cfg.jwt.enabled {
+                tracing::error!("Failed to initialize JWT validator: {}", e);
+                std::process::exit(1);
+            }
+            Arc::new(jwt::JwtValidator::noop())
+        }
     };
 
-    runtime::Builder::new_multi_thread()
-        .worker_threads(thread_count)
-        .enable_io()
-        .enable_time()
-        .global_queue_interval(61)
-        .max_io_events_per_tick(1024)
-        .on_thread_start(|| {
-            tracing::debug!(target: "appgate::runtime", "Worker thread started");
-        })
-        .on_thread_stop(|| {
-            tracing::debug!(target: "appgate::runtime", "Worker thread stopped");
-        })
-        .build()
-        .context("Failed to build tokio runtime")
+    // Initialize rate limiter
+    let rate_limiter = Arc::new(rate_limit::RateLimiter::new(&cfg.rate_limit).await);
+
+    // Initialize policy engine
+    let policy_engine = Arc::new(policy::PolicyEngine::new(&cfg).await);
+
+    // Initialize SSRF defense with approved LLM provider domains
+    let ssrf_guard = Arc::new(ssrf::SSRFDefense::from_config(&cfg));
+
+    // Initialize audit logger
+    let audit_logger = Arc::new(audit::AuditLogger::new(
+        cfg.control_plane_url.clone(),
+        Some(cfg.audit.endpoint.clone()),
+    ));
+
+    // Initialize metrics collector
+    let metrics = Arc::new(metrics::MetricsCollector::new());
+
+    // Initialize router
+    let router = Arc::new(router::Router::new(&cfg));
+
+    // Initialize response cache
+    let cache = Arc::new(cache::ResponseCache::new(&cfg));
+
+    // Initialize circuit breaker registry
+    let circuit_breaker = Arc::new(circuit_breaker::CircuitBreakerRegistry::new(&cfg.circuit_breaker));
+
+    // Initialize health checker
+    let health_checker = Arc::new(health::HealthChecker::new(&cfg));
+    
+    // Register upstreams with health checker
+    if !cfg.upstream.default_url.is_empty() {
+        health_checker.register("default", &cfg.upstream.default_url).await;
+    }
+    
+    let health_checker_bg = health_checker.clone();
+    tokio::spawn(async move {
+        health_checker_bg.start_background_checks().await;
+    });
+
+    // Spawn rate limiter cleanup task
+    let rate_limiter_cleanup = rate_limiter.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            rate_limiter_cleanup.cleanup_old_buckets().await;
+        }
+    });
+
+    let app_state = AppState {
+        config: cfg.clone(),
+        jwt_validator,
+        rate_limiter,
+        policy_engine,
+        ssrf_guard,
+        audit_logger,
+        metrics,
+        router,
+        cache,
+        circuit_breaker,
+        health_checker,
+    };
+
+    // Start HTTP proxy server
+    let server = server::AppGateServer::new(Arc::new(app_state), shutdown_rx);
+    if let Err(e) = server.run().await {
+        tracing::error!("Server fatal error: {}", e);
+        std::process::exit(1);
+    }
+
+    info!("AppGate gateway shutdown complete");
 }

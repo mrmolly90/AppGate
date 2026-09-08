@@ -1,67 +1,99 @@
-﻿package metrics
+﻿// AppGate Control Plane — Metrics Collector
+// Provides Prometheus-compatible metrics for the control plane.
+
+package metrics
 
 import (
-    "net/http"
-    "strconv"
+	"fmt"
+	"net/http"
+	"runtime"
 
-    "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promauto"
-    "github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
-    requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_requests_total",
-        Help: "Total requests processed",
-    }, []string{"project", "upstream", "model", "status"})
+	requestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "appgate_control_plane_requests_total",
+		Help: "Total HTTP requests processed",
+	}, []string{"method", "path", "status"})
 
-    requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-        Name:    "appgate_request_duration_seconds",
-        Help:    "Request latency",
-        Buckets: prometheus.DefBuckets,
-    }, []string{"project", "upstream"})
+	requestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "appgate_control_plane_request_duration_seconds",
+		Help:    "HTTP request duration in seconds",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "path"})
 
-    tokensConsumed = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_tokens_consumed_total",
-        Help: "Total tokens consumed",
-    }, []string{"project", "model", "token_type"})
+	activeConnections = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "appgate_control_plane_active_connections",
+		Help: "Number of active connections",
+	})
 
-    policyViolations = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_policy_violations_total",
-        Help: "Security policy violations",
-    }, []string{"project", "violation_type"})
+	leaderStatus = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "appgate_control_plane_leader_status",
+		Help: "1 if this instance is the leader, 0 otherwise",
+	})
 
-    rateLimitHits = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_rate_limit_hits_total",
-        Help: "Rate limit hits",
-    }, []string{"project"})
+	policyViolations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "appgate_control_plane_policy_violations_total",
+		Help: "Total policy violations by project and type",
+	}, []string{"project", "violation_type"})
 
-    upstreamErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "appgate_upstream_errors_total",
-        Help: "Upstream LLM errors",
-    }, []string{"project", "upstream", "error_type"})
+	upstreamErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "appgate_control_plane_upstream_errors_total",
+		Help: "Total upstream errors by project, upstream, and error type",
+	}, []string{"project", "upstream", "error_type"})
+
+	upstreamRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "appgate_control_plane_upstream_request_duration_seconds",
+		Help:    "Upstream request duration in seconds",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"project", "upstream", "model"})
 )
 
+func init() {
+	prometheus.MustRegister(requestsTotal, requestDuration, activeConnections,
+		leaderStatus, policyViolations, upstreamErrors, upstreamRequestDuration)
+}
+
+// Handler returns the Prometheus metrics HTTP handler.
 func Handler() http.Handler {
-    return promhttp.Handler()
+	return promhttp.Handler()
 }
 
-func RecordRequest(project, upstream, model string, status int, duration float64, inputTokens, outputTokens int) {
-    statusStr := strconv.Itoa(status)
-    requestsTotal.WithLabelValues(project, upstream, model, statusStr).Inc()
-    requestDuration.WithLabelValues(project, upstream).Observe(duration)
-    tokensConsumed.WithLabelValues(project, model, "input").Add(float64(inputTokens))
-    tokensConsumed.WithLabelValues(project, model, "output").Add(float64(outputTokens))
+// RecordRequest records an HTTP request metric with upstream context.
+func RecordRequest(project, upstream, model string, statusCode int, duration float64, inputTokens, outputTokens int) {
+	requestsTotal.WithLabelValues("POST", "/v1/chat/completions", fmt.Sprintf("%d", statusCode)).Inc()
+	upstreamRequestDuration.WithLabelValues(project, upstream, model).Observe(duration)
 }
 
+// RecordPolicyViolation records a policy violation.
 func RecordPolicyViolation(project, violationType string) {
-    policyViolations.WithLabelValues(project, violationType).Inc()
+	policyViolations.WithLabelValues(project, violationType).Inc()
 }
 
-func RecordRateLimitHit(project string) {
-    rateLimitHits.WithLabelValues(project).Inc()
-}
-
+// RecordUpstreamError records an upstream error.
 func RecordUpstreamError(project, upstream, errorType string) {
-    upstreamErrors.WithLabelValues(project, upstream, errorType).Inc()
+	upstreamErrors.WithLabelValues(project, upstream, errorType).Inc()
+}
+
+// SetLeaderStatus sets the leader status gauge.
+func SetLeaderStatus(isLeader bool) {
+	if isLeader {
+		leaderStatus.Set(1)
+	} else {
+		leaderStatus.Set(0)
+	}
+}
+
+// GetGoMetrics returns Go runtime metrics.
+func GetGoMetrics() map[string]interface{} {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return map[string]interface{}{
+		"goroutines": runtime.NumGoroutine(),
+		"heap_alloc": m.HeapAlloc,
+		"heap_sys":   m.HeapSys,
+		"gc_count":   m.NumGC,
+	}
 }

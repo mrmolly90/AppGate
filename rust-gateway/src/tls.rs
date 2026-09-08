@@ -1,24 +1,33 @@
+//! AppGate Gateway — TLS Configuration
+//!
+//! Loads PEM-encoded certificates and private keys using rustls 0.23.
+
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::fs;
 use std::sync::Arc;
-use std::path::Path;
-use rustls::ServerConfig;
-use tokio::fs;
+use tokio_rustls::TlsAcceptor;
 
+/// Load TLS server configuration from PEM files.
 pub async fn load_tls_config(
-    cert_path: impl AsRef<Path>,
-    key_path: impl AsRef<Path>,
-) -> anyhow::Result<Arc<ServerConfig>> {
-    let cert_pem = fs::read(cert_path).await?;
-    let key_pem = fs::read(key_path).await?;
+    cert_path: &str,
+    key_path: &str,
+) -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
+    let cert_pem = fs::read_to_string(cert_path)?;
+    let key_pem = fs::read_to_string(key_path)?;
 
-    let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
-        rustls_pemfile::certs(&mut &*cert_pem).collect::<Result<Vec<_>, _>>()?;
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let key = rustls_pemfile::private_key(&mut &*key_pem)?
-        .ok_or_else(|| anyhow::anyhow!("no valid private key found in key file"))?;
+    let keys: Vec<PrivateKeyDer<'static>> =
+        rustls_pemfile::private_key(&mut key_pem.as_bytes())?
+            .into_iter()
+            .collect();
 
-    let config = ServerConfig::builder()
+    let key = keys.into_iter().next().ok_or("No private key found")?;
+
+    let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)?;
 
-    Ok(Arc::new(config))
+    Ok(TlsAcceptor::from(Arc::new(config)))
 }

@@ -35,7 +35,7 @@ spec:
   type: {{ .Values.gateway.service.type | default "LoadBalancer" }}
   ports:
     - port: {{ .Values.gateway.service.port | default 443 }}
-      targetPort: {{ .Values.gateway.service.targetPort | default 8443 }}
+      targetPort: {{ .Values.gateway.service.targetPort | default 8080 }}
       name: https
     - port: {{ .Values.gateway.service.metricsPort | default 9090 }}
       targetPort: metrics

@@ -6,7 +6,7 @@ metadata:
   labels:
     app: appgate-control-plane
 spec:
-  replicas: 2
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -33,11 +33,12 @@ spec:
           image: appgate/control-plane:latest
           imagePullPolicy: Always
           ports:
-            - containerPort: 8443
+            - containerPort: 8080
+              name: http
               protocol: TCP
           env:
             - name: PORT
-              value: "8443"
+              value: "8080"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -57,21 +58,28 @@ spec:
                 - ALL
           resources:
             requests:
-              cpu: "250m"
-              memory: "256Mi"
-            limits:
-              cpu: "1"
+              cpu: "500m"
               memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8443
+              port: http
             initialDelaySeconds: 10
             periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 8443
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
@@ -98,6 +106,6 @@ spec:
     app: appgate-control-plane
   ports:
     - name: api
-      port: 8443
-      targetPort: 8443
+      port: 8080
+      targetPort: 8080
       protocol: TCP

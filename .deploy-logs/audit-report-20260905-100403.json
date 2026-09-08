@@ -1,0 +1,56 @@
+{
+    "Timestamp":  "2026-09-05T10:04:04.3023974-07:00",
+    "TotalFiles":  87,
+    "Issues":  [
+                   {
+                       "File":  "control-plane\\internal\\auth\\context.go",
+                       "Line":  0,
+                       "Severity":  "HIGH",
+                       "Issue":  "String context key - collision vulnerable",
+                       "Fix":  "Use unexported struct type",
+                       "Fixed":  false
+                   },
+                   {
+                       "File":  "control-plane\\internal\\ratelimit\\ratelimit.go",
+                       "Line":  0,
+                       "Severity":  "HIGH",
+                       "Issue":  "Hardcoded rate limit",
+                       "Fix":  "Read from Config",
+                       "Fixed":  false
+                   },
+                   {
+                       "File":  "gateway/Cargo.toml",
+                       "Line":  0,
+                       "Severity":  "CRITICAL",
+                       "Issue":  "Missing dependency: envy",
+                       "Fix":  "Add envy to Cargo.toml",
+                       "Fixed":  false
+                   },
+                   {
+                       "File":  "gateway/Cargo.toml",
+                       "Line":  0,
+                       "Severity":  "CRITICAL",
+                       "Issue":  "Missing dependency: once_cell",
+                       "Fix":  "Add once_cell to Cargo.toml",
+                       "Fixed":  false
+                   },
+                   {
+                       "File":  "gateway/Cargo.toml",
+                       "Line":  0,
+                       "Severity":  "CRITICAL",
+                       "Issue":  "Missing dependency: redis",
+                       "Fix":  "Add redis to Cargo.toml",
+                       "Fixed":  false
+                   },
+                   {
+                       "File":  "gateway/Cargo.toml",
+                       "Line":  0,
+                       "Severity":  "CRITICAL",
+                       "Issue":  "Missing dependency: deadpool",
+                       "Fix":  "Add deadpool to Cargo.toml",
+                       "Fixed":  false
+                   }
+               ],
+    "CriticalCount":  4,
+    "HighCount":  2
+}

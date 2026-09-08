@@ -4,7 +4,7 @@
 terraform {
   backend "s3" {
     bucket         = "appgate-terraform-state"
-    key            = "dev/terraform.tfstate"
+    key            = "staging/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
     dynamodb_table = "appgate-terraform-locks"

@@ -43,7 +43,21 @@ spec:
             cpu: "500m"
       volumes:
       - name: etcd-data
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: appgate-etcd-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: appgate-etcd-pvc
+  namespace: appgate-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: gp2
 ---
 apiVersion: v1
 kind: Service

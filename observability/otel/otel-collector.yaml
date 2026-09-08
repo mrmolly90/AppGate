@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: otel-collector
-  namespace: appgate-observability
+  namespace: appgate-system
 data:
   config: |
     receivers:
@@ -13,9 +13,6 @@ data:
             max_recv_msg_size_mib: 64
           http:
             endpoint: 0.0.0.0:4318
-            cors:
-              allowed_origins: ["*"]
-              allowed_headers: ["*"]
     processors:
       batch:
         timeout: 1s
@@ -34,10 +31,6 @@ data:
         endpoint: http://prometheus:9090/api/v1/write
         tls:
           insecure: true
-      otlp/jaeger:
-        endpoint: jaeger-collector:4317
-        tls:
-          insecure: true
       logging:
         verbosity: detailed
     service:
@@ -45,7 +38,7 @@ data:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, batch, resource]
-          exporters: [otlp/jaeger, logging]
+          exporters: [logging]
         metrics:
           receivers: [otlp]
           processors: [memory_limiter, batch, resource]
@@ -55,7 +48,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: otel-collector
-  namespace: appgate-observability
+  namespace: appgate-system
 spec:
   replicas: 2  # HA: minimum 2 for production
   selector:
@@ -97,7 +90,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: otel-collector
-  namespace: appgate-observability
+  namespace: appgate-system
 spec:
   selector:
     app: otel-collector

@@ -1,103 +1,99 @@
-// =============================================================================
-// AppGate Gateway — Audit Event Logging
-// =============================================================================
-//
-// Sends audit events to the control plane for compliance and
-// forensics. Fire-and-forget to avoid blocking the hot path.
-// =============================================================================
+//! AppGate Gateway — Audit Event Logger
+//!
+//! Batches audit events and sends them to the control plane asynchronously.
 
-use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
-use uuid::Uuid;
+use serde::Serialize;
+use tokio::sync::mpsc;
+use tracing::debug;
 
-/// Audit event severity levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AuditSeverity {
-    /// Informational events (e.g., successful requests)
-    Info,
-    /// Warning events (e.g., rate limit approaching)
-    Warning,
-    /// Error events (e.g., authentication failure)
-    Error,
-    /// Critical events (e.g., security policy violation)
-    Critical,
-}
-
-/// An audit event sent to the control plane
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AuditEvent {
-    /// Unique event identifier
-    pub id: Uuid,
-    /// Event timestamp (Unix epoch nanos)
-    pub timestamp: u128,
-    /// Event type (e.g., "authentication.success", "proxy.request")
     pub event_type: String,
-    /// Identity ID that performed the action
-    pub client_id: String,
-    /// Client IP address
-    pub client_ip: String,
-    /// Action performed
+    pub actor_id: String,
     pub action: String,
-    /// Resource accessed
     pub resource: String,
-    /// Result of the action
     pub result: String,
-    /// Correlation ID for tracing
     pub correlation_id: String,
-    /// Event severity
-    pub severity: AuditSeverity,
-    /// Source component
     pub source: String,
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
-impl AuditEvent {
-    /// Create a new audit event.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        event_type: &str,
-        actor_id: &str,
-        peer_addr: &str,
-        action: &str,
-        resource: &str,
-        result: &str,
-        correlation_id: &str,
-        severity: AuditSeverity,
-    ) -> Self {
+pub struct AuditLogger {
+    client: reqwest::Client,
+    sender: mpsc::UnboundedSender<AuditEvent>,
+}
+
+impl AuditLogger {
+    pub fn new(_config: &crate::config::AuditConfig) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let (sender, mut receiver) = mpsc::unbounded_channel::<AuditEvent>();
+
+        let client_clone = client.clone();
+        let control_plane_url = std::env::var("APPGATE_CONTROL_PLANE_URL")
+            .unwrap_or_else(|_| "http://appgate-control-plane:8080".to_string());
+        let endpoint = format!("{}/v1/audit/batch", control_plane_url.trim_end_matches('/'));
+
+        tokio::spawn(async move {
+            let mut batch = Vec::with_capacity(100);
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+
+            loop {
+                tokio::select! {
+                    Some(event) = receiver.recv() => {
+                        batch.push(event);
+                        if batch.len() >= 100 {
+                            Self::send_batch(&client_clone, &endpoint, &batch).await;
+                            batch.clear();
+                        }
+                    }
+                    _ = interval.tick() => {
+                        if !batch.is_empty() {
+                            Self::send_batch(&client_clone, &endpoint, &batch).await;
+                            batch.clear();
+                        }
+                    }
+                    else => break,
+                }
+            }
+        });
+
         Self {
-            id: Uuid::new_v4(),
-            timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
-            event_type: event_type.to_string(),
-            client_id: actor_id.to_string(),
-            client_ip: peer_addr.to_string(),
-            action: action.to_string(),
-            resource: resource.to_string(),
-            result: result.to_string(),
-            correlation_id: correlation_id.to_string(),
-            severity,
-            source: "rust-gateway".to_string(),
+            client,
+            sender,
         }
     }
-}
 
-/// Send an audit event to the control plane (fire-and-forget).
-///
-/// # Performance rationale
-///
-/// This spawns a background task to send the event, so the hot path
-/// is never blocked by network I/O to the control plane.
-pub fn send_audit_event(event: AuditEvent) {
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let url = "http://control-plane:8080/v1/audit/events".to_string();
-        let _ = client
-            .post(&url)
-            .json(&event)
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await;
-    });
+    pub fn record(&self, event: AuditEvent) {
+        debug!(
+            event_type = %event.event_type,
+            actor_id = %event.actor_id,
+            action = %event.action,
+            result = %event.result,
+            "audit event"
+        );
+
+        if let Err(e) = self.sender.send(event) {
+            tracing::warn!(error = %e, "audit channel closed, dropping event");
+        }
+    }
+
+    async fn send_batch(client: &reqwest::Client, url: &str, batch: &[AuditEvent]) {
+        if batch.is_empty() {
+            return;
+        }
+        match client.post(url).json(batch).send().await {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    tracing::warn!(status = %resp.status(), "audit batch rejected by control plane");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to send audit batch to control plane");
+            }
+        }
+    }
 }

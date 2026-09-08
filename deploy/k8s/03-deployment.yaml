@@ -29,9 +29,9 @@ spec:
       serviceAccountName: appgate
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        fsGroup: 65532
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
       affinity:
@@ -57,10 +57,10 @@ spec:
               containerPort: 9090
               protocol: TCP
           envFrom:
-        - configMapRef:
-            name: appgate-config
-        - secretRef:
-            name: appgate-secrets
+            - configMapRef:
+                name: appgate-config
+            - secretRef:
+                name: appgate-secrets
           env:
             - name: APPGATE_PG_DSN
               valueFrom:
@@ -73,21 +73,11 @@ spec:
                   name: appgate-secrets
                   key: redis-password
                   optional: true
-            - name: APPGATE_JWT_PUBLIC_KEY
+            - name: APPGATE_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: appgate-secrets
-                  key: jwt-public-key
-            - name: APPGATE_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: appgate-secrets
-                  key: openai-api-key
-            - name: APPGATE_ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: appgate-secrets
-                  key: anthropic-api-key
+                  key: jwt-secret
             - name: APPGATE_ETCD_PASSWORD
               valueFrom:
                 secretKeyRef:

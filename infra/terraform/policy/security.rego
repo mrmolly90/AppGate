@@ -44,7 +44,23 @@ deny[msg] {
 deny[msg] {
     some i
     resource := input.resource.aws_eks_cluster[i]
-    semver_compare(resource.version, ">= 1.27.0") == false
+    version := resource.version
+    parts := split(version, ".")
+    major := to_number(parts[0])
+    minor := to_number(parts[1])
+    major < 1
+    msg = sprintf("EKS cluster %s must use Kubernetes >= 1.27", [resource.name])
+}
+
+deny[msg] {
+    some i
+    resource := input.resource.aws_eks_cluster[i]
+    version := resource.version
+    parts := split(version, ".")
+    major := to_number(parts[0])
+    minor := to_number(parts[1])
+    major == 1
+    minor < 27
     msg = sprintf("EKS cluster %s must use Kubernetes >= 1.27", [resource.name])
 }
 

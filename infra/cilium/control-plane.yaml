@@ -12,17 +12,17 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow from gateway
+    # Allow from gateway pods
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: appgate-gateway
+              kubernetes.io/metadata.name: appgate-system
           podSelector:
             matchLabels:
               app: appgate-gateway
       ports:
         - protocol: TCP
-          port: 8443
+          port: 8080
     # Allow from admin (via admin API)
     - from:
         - namespaceSelector:
@@ -33,9 +33,9 @@ spec:
               app: appgate-admin
       ports:
         - protocol: TCP
-          port: 8444
+          port: 8080
   egress:
-    # Allow to database
+    # Allow to PostgreSQL
     - to:
         - namespaceSelector:
             matchLabels:
@@ -46,13 +46,21 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Allow to Prometheus (already covered by allow-metrics)
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: gateway-allow
-  namespace: appgate-gateway
+  namespace: appgate-system
 spec:
   podSelector:
     matchLabels:
@@ -64,10 +72,10 @@ spec:
     # Allow from internet via load balancer
     - from:
         - ipBlock:
-            cidr: 0.0.0.0/0  # Explicitly documented: external client traffic
+            cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
-          port: 443
+          port: 8080
   egress:
     # Allow to control plane
     - to:
@@ -79,11 +87,11 @@ spec:
               app: appgate-control-plane
       ports:
         - protocol: TCP
-          port: 8443
+          port: 8080
     # Allow to approved LLM endpoints only
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0  # Explicitly documented: outbound to LLM providers
+            cidr: 0.0.0.0/0
           except:
             - 10.0.0.0/8
             - 172.16.0.0/12
@@ -93,3 +101,12 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53

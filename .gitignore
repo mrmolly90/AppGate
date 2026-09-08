@@ -2,6 +2,7 @@
 control-plane/bin/
 control-plane/tmp/
 gateway/target/
+rust-gateway/target/
 
 # IDE
 .idea/
@@ -19,6 +20,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.example
 
 # Terraform
 infra/terraform/**/.terraform/
@@ -44,7 +46,6 @@ deploy/helm/**/*.lock
 .docker/
 # Security & Build artifacts
 node_modules/
-*.log
 *.exe
 *.dll
 *.so

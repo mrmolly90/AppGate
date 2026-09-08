@@ -45,7 +45,42 @@ rust-audit: ## Audit Rust dependencies for vulnerabilities
 
 rust-all: rust-fmt rust-clippy rust-test rust-audit rust-build ## Run all Rust checks
 
-# ── Docker ────────────────────────────────────────────────────────
+# ── Docker Compose ────────────────────────────────────────────────
+docker-up: ## Start full AppGate stack via docker-compose
+	docker compose up -d --build
+
+docker-down: ## Stop AppGate stack
+	docker compose down -v
+
+docker-down-strict: ## Stop and remove everything
+	docker compose down --rmi all -v
+
+docker-logs: ## Tail logs from all services
+	docker compose logs -f
+
+docker-ps: ## Show running containers
+	docker compose ps
+
+docker-restart: ## Rebuild and restart all services
+	docker compose up -d --build --force-recreate
+
+docker-health: ## Check health of all services
+	docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+
+# ── Docker Build Individual ───────────────────────────────────────
+docker-build-cp: ## Build control-plane only
+	docker compose build control-plane
+
+docker-build-gw: ## Build gateway only
+	docker compose build gateway
+
+# ── Deploy ────────────────────────────────────────────────────────
+deploy: docker-down docker-up ## Full redeploy
+	@echo "✅ AppGate stack redeployed"
+
+deploy-production: ## Production deployment (no dev mounts)
+	docker compose -f docker-compose.yml up -d --build
+
 docker-control-plane: ## Build control-plane Docker image
 	docker buildx build --platform=linux/amd64,linux/arm64 \
 		--cache-from type=gha,scope=control-plane \

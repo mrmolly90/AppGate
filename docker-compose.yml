@@ -1,0 +1,155 @@
+# =============================================================================
+# AppGate — Full Production Stack
+# =============================================================================
+# Deploys: control-plane, gateway (axum), PostgreSQL, Redis
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: appgate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: appgate
+      POSTGRES_USER: appgate
+      POSTGRES_PASSWORD: ${APPGATE_PG_PASSWORD:-appgate}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./control-plane/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appgate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: appgate-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ── Control Plane ─────────────────────────────────────────────────────────
+  control-plane:
+    build:
+      context: ./control-plane
+      dockerfile: Dockerfile
+    container_name: appgate-control-plane
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+      - "9091:9091"
+    environment:
+      APPGATE_PG_DSN: postgres://appgate:${APPGATE_PG_PASSWORD:-appgate}@postgres:5432/appgate?sslmode=disable
+      APPGATE_REDIS_URL: redis://redis:6379/0
+      APPGATE_LISTEN_ADDR: ":8080"
+      APPGATE_METRICS_ADDR: ":9090"
+      APPGATE_GRPC_ADDR: ":9091"
+      APPGATE_JWT_SECRET: ${APPGATE_JWT_SECRET:-dev-secret-change-in-production}
+      APPGATE_LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+    logging: *default-logging
+
+  # ── Gateway (Axum) ────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: appgate-gateway
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+      - "9092:9090"
+    environment:
+      APPGATE_BIND_ADDR: 0.0.0.0
+      APPGATE_PORT: 8080
+      APPGATE_METRICS_PORT: 9090
+      APPGATE_CONTROL_PLANE_URL: http://control-plane:8080
+      APPGATE_REDIS_URL: redis://redis:6379/0
+      APPGATE_JWT_ENABLED: "true"
+      APPGATE_JWT_SECRET: ${APPGATE_JWT_SECRET:-dev-secret-change-in-production}
+      APPGATE_LOG_LEVEL: info
+      APPGATE_ENVIRONMENT: production
+      APPGATE_RATE_LIMIT_ENABLED: "true"
+      APPGATE_RATE_LIMIT_RPS: "100"
+      APPGATE_CACHE_ENABLED: "true"
+      APPGATE_CACHE_TTL_SECS: "60"
+      APPGATE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+      APPGATE_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS: "30000"
+      APPGATE_UPSTREAM_DEFAULT_URL: ""
+      APPGATE_UPSTREAM_CONNECT_TIMEOUT_MS: "5000"
+      APPGATE_UPSTREAM_READ_TIMEOUT_MS: "60000"
+      APPGATE_APPROVED_DOMAINS: api.openai.com,api.anthropic.com
+      APPGATE_CORS_ORIGINS: ""
+      RUST_LOG: info,appgate=debug
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local

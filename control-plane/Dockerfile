@@ -5,10 +5,13 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X main.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" -a -installsuffix cgo -o bin/appgate ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tini curl && \
+    addgroup -g 1000 appgate && \
+    adduser -u 1000 -G appgate -s /sbin/nologin -D appgate
 WORKDIR /
 COPY --from=builder /app/bin/appgate /control-plane
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 EXPOSE 8080 9090 9091
-USER nonroot:nonroot
-ENTRYPOINT ["/control-plane"]
+USER appgate
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/control-plane"]

@@ -1,105 +1,66 @@
-﻿services:
-  gateway:
-    build:
-      context: ./gateway
-      dockerfile: Dockerfile
-    ports:
-      - "8443:8443"
-    volumes:
-      - ./certs/tls:/etc/appgate/tls:ro
-      - ./certs/jwt:/etc/appgate/jwt:ro
-    environment:
-      - APPGATE_LISTEN_ADDR=0.0.0.0
-      - APPGATE_LISTEN_PORT=8443
-      - APPGATE_CONTROL_PLANE_URL=http://control-plane:9090
-      - APPGATE_TLS_CERT_PATH=/etc/appgate/tls/cert.pem
-      - APPGATE_TLS_KEY_PATH=/etc/appgate/tls/key.pem
-      - APPGATE_JWT_KEY_PATH=/etc/appgate/jwt/verify.pem
-      - APPGATE_REDIS_URL=redis://redis:6379
-      - RUST_LOG=appgate=info
-    depends_on:
-      redis:
-        condition: service_started
-      control-plane:
-        condition: service_started
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 512M
-        reservations:
-          cpus: '0.5'
-          memory: 128M
-    read_only: true
-    tmpfs:
-      - /tmp:noexec,nosuid,size=50m
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider --no-check-certificate https://localhost:8443/healthz || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+﻿# =============================================================================
+# AppGate Gateway — Standalone Development Stack
+# =============================================================================
+# Note: For the full production stack, use docker-compose.yml at the project root.
+# This file runs only the gateway + Redis for local testing.
+# =============================================================================
 
-  control-plane:
-    build:
-      context: ./control-plane
-      dockerfile: Dockerfile
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: appgate-redis-dev
+    restart: unless-stopped
     ports:
-      - "8080:8080"
-      - "9090:9090"
-    environment:
-      - APPGATE_HTTP_PORT=8080
-      - APPGATE_GRPC_PORT=9090
-      - APPGATE_ETCD_ENDPOINTS=http://etcd:2379
-      - APPGATE_DATABASE_URL=postgres://appgate:changeme@postgres:5432/appgate?sslmode=disable
-      - APPGATE_REDIS_URL=redis://redis:6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      etcd:
-        condition: service_started
-      redis:
-        condition: service_started
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: appgate
-      POSTGRES_PASSWORD: changeme
-      POSTGRES_DB: appgate
+      - "6379:6379"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - redis_dev_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U appgate"]
-      interval: 5s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.13
-    command:
-      - /usr/local/bin/etcd
-      - --listen-client-urls=http://0.0.0.0:2379
-      - --advertise-client-urls=http://etcd:2379
-      - --data-dir=/etcd-data
-    volumes:
-      - etcd_data:/etcd-data
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: appgate-gateway-dev
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+      - "9092:9090"
+    environment:
+      APPGATE_BIND_ADDR: 0.0.0.0
+      APPGATE_PORT: 8080
+      APPGATE_METRICS_PORT: 9090
+      APPGATE_CONTROL_PLANE_URL: http://host.docker.internal:8080
+      APPGATE_REDIS_URL: redis://redis:6379/0
+      APPGATE_TLS_ENABLED: "false"
+      APPGATE_JWT_ENABLED: "false"
+      APPGATE_LOG_LEVEL: debug
+      APPGATE_ENVIRONMENT: development
+      APPGATE_RATE_LIMIT_ENABLED: "true"
+      APPGATE_RATE_LIMIT_RPS: "100"
+      APPGATE_CACHE_ENABLED: "true"
+      APPGATE_CACHE_TTL_SECS: "60"
+      APPGATE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+      APPGATE_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS: "30000"
+      APPGATE_UPSTREAM_DEFAULT_URL: ""
+      APPGATE_UPSTREAM_CONNECT_TIMEOUT_MS: "5000"
+      APPGATE_UPSTREAM_READ_TIMEOUT_MS: "60000"
+      APPGATE_APPROVED_DOMAINS: api.openai.com,api.anthropic.com
+      RUST_LOG: debug,appgate=debug
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
-  postgres_data:
-  etcd_data:
+  redis_dev_data:

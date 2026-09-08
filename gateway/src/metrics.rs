@@ -58,7 +58,15 @@ impl MetricsCollector {
             request_count: AtomicU64::new(0),
         }
     }
+}
 
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MetricsCollector {
     pub fn record_request(&self, status: &str, latency_ms: u64) {
         let endpoint = "proxy";
         REQUEST_DURATION.with_label_values(&[endpoint]).observe(latency_ms as f64 / 1000.0);

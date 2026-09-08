@@ -126,4 +126,8 @@ impl CircuitBreakerRegistry {
     pub fn len(&self) -> usize {
         self.breakers.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.breakers.is_empty()
+    }
 }

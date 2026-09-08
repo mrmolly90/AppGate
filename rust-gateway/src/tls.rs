@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
 
 /// Load TLS server configuration from PEM files.
+#[allow(dead_code)]
 pub async fn load_tls_config(
     cert_path: &str,
     key_path: &str,

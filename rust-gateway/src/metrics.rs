@@ -1,11 +1,10 @@
 //! AppGate Gateway — Prometheus Metrics
 //!
-//! Exposes standard RED metrics (Rate, Errors, Duration) plus
-//! gateway-specific gauges for active connections and auth failures.
+//! Exposes standard RED metrics (Rate, Errors, Duration).
 
 use prometheus::{
-    gather, register_counter_vec, register_gauge, register_histogram_vec, CounterVec, Encoder,
-    Gauge, HistogramVec, TextEncoder,
+    gather, register_counter_vec, register_histogram_vec, CounterVec, Encoder,
+    HistogramVec, TextEncoder,
 };
 
 pub struct MetricsCollector;
@@ -14,14 +13,18 @@ impl MetricsCollector {
         Self
     }
 }
+
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 use std::time::Instant;
 use std::sync::OnceLock;
 
 // ── Metric Definitions ──────────────────────────────────────────────────────
 static REQUESTS_TOTAL: OnceLock<CounterVec> = OnceLock::new();
 static REQUEST_DURATION: OnceLock<HistogramVec> = OnceLock::new();
-static ACTIVE_CONNECTIONS_GAUGE: OnceLock<Gauge> = OnceLock::new();
-static AUTH_FAILURES_TOTAL: OnceLock<CounterVec> = OnceLock::new();
 
 fn requests_total() -> &'static CounterVec {
     REQUESTS_TOTAL.get_or_init(|| {
@@ -46,27 +49,6 @@ fn request_duration() -> &'static HistogramVec {
     })
 }
 
-fn active_connections_gauge() -> &'static Gauge {
-    ACTIVE_CONNECTIONS_GAUGE.get_or_init(|| {
-        register_gauge!(
-            "gateway_connections_active",
-            "Current number of active connections"
-        )
-        .expect("metric registration failed")
-    })
-}
-
-fn auth_failures_total() -> &'static CounterVec {
-    AUTH_FAILURES_TOTAL.get_or_init(|| {
-        register_counter_vec!(
-            "gateway_auth_failures_total",
-            "Total authentication failures",
-            &["reason"]
-        )
-        .expect("metric registration failed")
-    })
-}
-
 // =============================================================================
 // Public API
 // =============================================================================
@@ -80,16 +62,6 @@ pub fn record_request(endpoint: &str, status: u16, start: Instant) {
     request_duration()
         .with_label_values(&[endpoint])
         .observe(start.elapsed().as_secs_f64());
-}
-
-/// Update the active connections gauge.
-pub fn set_active_connections(count: f64) {
-    active_connections_gauge().set(count);
-}
-
-/// Record an authentication failure.
-pub fn record_auth_failure(reason: &str) {
-    auth_failures_total().with_label_values(&[reason]).inc();
 }
 
 /// Gather all registered metrics in Prometheus text format.

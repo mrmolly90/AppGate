@@ -370,12 +370,3 @@ async fn handle_proxy(
         }
     }
 }
-
-// =============================================================================
-// Metrics Helper
-// =============================================================================
-
-fn update_connection_metrics() {
-    let count = ACTIVE_CONNECTIONS.load(Ordering::Relaxed) as f64;
-    crate::metrics::set_active_connections(count);
-}

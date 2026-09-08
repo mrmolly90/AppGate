@@ -24,7 +24,15 @@ impl ProxyClient {
             .expect("failed to build HTTP client");
         Self { client }
     }
+}
 
+impl Default for ProxyClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProxyClient {
     /// Forward a request to the upstream control plane or LLM API.
     pub async fn forward(
         &self,
@@ -64,8 +72,13 @@ impl ProxyClient {
             .status(status)
             .header("content-type", "application/json")
             .header("x-appgate-proxy", "1")
-            .body(Full::new(Bytes::from(body_bytes)))
-            .map_err(|e| ProxyError::Internal(e.to_string()))?)
+            .body(Full::new(body_bytes))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Full::new(Bytes::from("{}")))
+                    .unwrap()
+            }))
     }
 }
 

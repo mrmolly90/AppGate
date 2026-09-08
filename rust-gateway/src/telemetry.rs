@@ -72,6 +72,7 @@ pub fn init_tracer_provider(otlp_endpoint: &str, debug: bool) -> Option<TracerGu
 }
 
 /// Shutdown telemetry and flush remaining spans.
+#[allow(dead_code)]
 pub async fn shutdown() {
     #[cfg(feature = "otel")]
     {

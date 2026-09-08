@@ -10,7 +10,7 @@
 // =============================================================================
 
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, SamplingMode,
+    black_box, criterion_group, criterion_main, Criterion, SamplingMode,
 };
 use std::time::Duration;
 

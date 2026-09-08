@@ -19,7 +19,6 @@ pub struct AuditEvent {
 }
 
 pub struct AuditLogger {
-    client: reqwest::Client,
     sender: mpsc::UnboundedSender<AuditEvent>,
 }
 
@@ -62,7 +61,6 @@ impl AuditLogger {
         });
 
         Self {
-            client,
             sender,
         }
     }

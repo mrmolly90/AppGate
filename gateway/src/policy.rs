@@ -15,7 +15,7 @@ struct Policy {
     condition: PolicyCondition,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
 enum PolicyAction {
     Allow,
@@ -42,22 +42,23 @@ pub struct PolicyResult {
 
 impl PolicyEngine {
     pub async fn new(_config: &crate::config::GatewayConfig) -> Self {
-        let mut policies = vec![];
-        policies.push(Policy {
-            name: "block-private-ips".into(),
-            action: PolicyAction::Deny,
-            condition: PolicyCondition::PathMatches(r"(127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)".into()),
-        });
-        policies.push(Policy {
-            name: "max-body-size".into(),
-            action: PolicyAction::Deny,
-            condition: PolicyCondition::MaxBodySize(10 * 1024 * 1024),
-        });
-        policies.push(Policy {
-            name: "block-sensitive-files".into(),
-            action: PolicyAction::Deny,
-            condition: PolicyCondition::PathMatches(r"\.(env|git|ssh|aws|docker)".into()),
-        });
+        let policies = vec![
+            Policy {
+                name: "block-private-ips".into(),
+                action: PolicyAction::Deny,
+                condition: PolicyCondition::PathMatches(r"(127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)".into()),
+            },
+            Policy {
+                name: "max-body-size".into(),
+                action: PolicyAction::Deny,
+                condition: PolicyCondition::MaxBodySize(10 * 1024 * 1024),
+            },
+            Policy {
+                name: "block-sensitive-files".into(),
+                action: PolicyAction::Deny,
+                condition: PolicyCondition::PathMatches(r"\.(env|git|ssh|aws|docker)".into()),
+            },
+        ];
 
         let mut compiled = HashMap::new();
         for policy in &policies {
@@ -100,15 +101,12 @@ impl PolicyEngine {
                     let compiled = self.compiled.read().await;
                     if let Some(re) = compiled.get(&policy.name) {
                         if re.is_match(&path) {
-                            match policy.action {
-                                PolicyAction::Allow => {
-                                    tracing::debug!(policy = %policy.name, identity = %identity_id, "allow policy matched for anonymous");
-                                    return PolicyResult {
-                                        allowed: true,
-                                        reason: format!("allowed by policy '{}'", policy.name),
-                                    };
-                                }
-                                _ => {}
+                            if policy.action == PolicyAction::Allow {
+                                tracing::debug!(policy = %policy.name, identity = %identity_id, "allow policy matched for anonymous");
+                                return PolicyResult {
+                                    allowed: true,
+                                    reason: format!("allowed by policy '{}'", policy.name),
+                                };
                             }
                         }
                     }

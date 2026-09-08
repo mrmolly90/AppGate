@@ -15,8 +15,6 @@ pub struct CachedResponse {
 
 pub struct ResponseCache {
     inner: Option<Cache<String, CachedResponse>>,
-    ttl: Duration,
-    max_size: u64,
     enabled: bool,
 }
 
@@ -40,8 +38,6 @@ impl ResponseCache {
 
         Self {
             inner,
-            ttl,
-            max_size,
             enabled: cache_cfg.enabled,
         }
     }

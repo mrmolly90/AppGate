@@ -1,9 +1,10 @@
-﻿# =============================================================================
+﻿# syntax=docker/dockerfile:1
+# =============================================================================
 # AppGate Gateway — Production Build
 # =============================================================================
 
 # ── Builder stage ────────────────────────────────────────────────────────────
-FROM rust:1.85-alpine AS builder
+FROM rust:1.80-alpine AS builder
 RUN apk add --no-cache musl-dev gcc cmake make protoc protobuf-dev
 WORKDIR /app
 COPY . .
@@ -18,4 +19,5 @@ COPY --from=builder /app/target/release/appgate-gateway /usr/local/bin/appgate-g
 USER appgate
 EXPOSE 8080 9090
 ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/usr/local/bin/appgate-gateway"]
 CMD ["/usr/local/bin/appgate-gateway"]

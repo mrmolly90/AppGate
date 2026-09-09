@@ -215,7 +215,7 @@ services:
 
   #  etcd (distributed store for leader election)
   etcd:
-    image: bitnami/etcd:3.5
+    image: bitnami/etcd:3.5.15
     container_name: appgate-etcd
     restart: unless-stopped
     environment:
@@ -235,7 +235,7 @@ services:
 
   #  OpenTelemetry Collector
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.100.0
+    image: otel/opentelemetry-collector-contrib:0.114.0
     container_name: appgate-otel-collector
     restart: unless-stopped
     ports:

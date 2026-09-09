@@ -27,7 +27,7 @@ func HandleListPolicies(db *sql.DB) http.HandlerFunc {
 
 func HandleCreatePolicy(db *sql.DB, elector *leader.Elector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !elector.IsLeader() {
+		if elector != nil && !elector.IsLeader() {
 			http.Error(w, `{"error":"not_leader","message":"Write operations require leader"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -48,7 +48,7 @@ func HandleGetPolicy(db *sql.DB) http.HandlerFunc {
 
 func HandleUpdatePolicy(db *sql.DB, elector *leader.Elector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !elector.IsLeader() {
+		if elector != nil && !elector.IsLeader() {
 			http.Error(w, `{"error":"not_leader"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -59,7 +59,7 @@ func HandleUpdatePolicy(db *sql.DB, elector *leader.Elector) http.HandlerFunc {
 
 func HandleDeletePolicy(db *sql.DB, elector *leader.Elector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !elector.IsLeader() {
+		if elector != nil && !elector.IsLeader() {
 			http.Error(w, `{"error":"not_leader"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -81,12 +81,20 @@ func HandleValidatePolicy(db *sql.DB) http.HandlerFunc {
 func HandleListGateways(store *store.EtcdStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if store == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{"gateways": []interface{}{}, "mode": "standalone"})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"gateways": []interface{}{}})
 	}
 }
 
 func HandleRegisterGateway(store *store.EtcdStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, `{"error":"not_available","message":"etcd not available, running standalone"}`, http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
@@ -95,6 +103,10 @@ func HandleRegisterGateway(store *store.EtcdStore) http.HandlerFunc {
 
 func HandleGatewayHeartbeat(store *store.EtcdStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, `{"error":"not_available","message":"etcd not available, running standalone"}`, http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}

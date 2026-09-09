@@ -1,0 +1,61 @@
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::{BatchSpanProcessor, Config, TracerProvider as SdkTracerProvider};
+use opentelemetry_sdk::Resource;
+use std::time::Duration;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+pub fn init_telemetry() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,appgate=debug"));
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_thread_ids(true);
+
+    // Try to initialize OTLP exporter; fall back to stdout-only if unavailable
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".into());
+
+    let exporter = opentelemetry_otlp::new_exporter()
+        .tonic()
+        .with_endpoint(&otlp_endpoint)
+        .with_timeout(Duration::from_secs(3))
+        .build_span_exporter();
+
+    match exporter {
+        Ok(exporter) => {
+            let batch_processor = BatchSpanProcessor::builder(exporter)
+                .with_max_queue_size(4096)
+                .with_max_export_batch_size(512)
+                .with_scheduled_delay(Duration::from_millis(500))
+                .build();
+
+            let provider = SdkTracerProvider::builder()
+                .with_config(
+                    Config::default()
+                        .with_resource(Resource::new(vec![
+                            opentelemetry::KeyValue::new("service.name", "appgate-gateway"),
+                            opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+                        ]))
+                )
+                .with_span_processor(batch_processor)
+                .build();
+
+            let tracer = provider.tracer("appgate-gateway");
+            let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(fmt_layer)
+                .with(telemetry)
+                .init();
+        }
+        Err(e) => {
+            eprintln!("OTLP initialization failed ({}), using stdout only", e);
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(fmt_layer)
+                .init();
+        }
+    }
+}

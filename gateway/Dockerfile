@@ -20,4 +20,3 @@ USER appgate
 EXPOSE 8080 9090
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/usr/local/bin/appgate-gateway"]
-CMD ["/usr/local/bin/appgate-gateway"]

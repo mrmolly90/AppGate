@@ -34,18 +34,21 @@ full = [
     "ssrf-protection",
     "audit",
     "jwt-auth",
-    "connection-pooling",
+    "dep:reqwest",
+    "dep:moka",
+    "dep:envy",
+    "dep:regex",
+    "dep:url",
 ]
 # Core protocol support
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
 metrics = ["dep:prometheus"]
-ratelimit = ["dep:governor"]
-policy-engine = []
-ssrf-protection = []
-audit = []
+ratelimit = ["dep:governor", "dep:redis"]
+policy-engine = ["dep:regex"]
+ssrf-protection = ["dep:url"]
+audit = ["dep:reqwest"]
 jwt-auth = ["dep:jsonwebtoken", "dep:rsa"]
-connection-pooling = ["dep:deadpool"]
 # Minimal edge gateway — no TLS termination, no OTel, no rate limiting
 minimal = []
 
@@ -97,9 +100,8 @@ rsa = { version = "0.9", optional = true }
 
 # ── Rate Limiting ─────────────────────────────────────────────────
 governor = { version = "0.7", optional = true }
-
-# ── Connection Pooling ────────────────────────────────────────────
-deadpool = { version = "0.12", optional = true }
+deadpool-redis = { version = "0.20", optional = true }
+redis = { version = "0.27", optional = true, features = ["tokio-comp", "connection-manager"] }
 
 # ── Observability ─────────────────────────────────────────────────
 tracing = "0.1"
@@ -108,37 +110,47 @@ tracing-subscriber = { version = "0.3", features = [
     "json",
     "registry",
 ] }
-tracing-opentelemetry = { version = "0.28", optional = true }
-opentelemetry = { version = "0.28", optional = true, features = [
+tracing-opentelemetry = { version = "0.27", optional = true }
+opentelemetry = { version = "0.26", optional = true, features = [
     "metrics",
     "trace",
 ] }
-opentelemetry_sdk = { version = "0.28", optional = true, features = [
+opentelemetry_sdk = { version = "0.26", optional = true, features = [
     "rt-tokio",
-    "metrics",
+    "trace",
 ] }
-opentelemetry-otlp = { version = "0.28", optional = true, features = [
+opentelemetry-otlp = { version = "0.26", optional = true, features = [
     "grpc-tonic",
 ] }
 prometheus = { version = "0.14", optional = true }
 
+# ── HTTP Client (reqwest) ────────────────────────────────────────
+reqwest = { version = "0.12", optional = true, features = [
+    "http2",
+    "json",
+    "rustls-tls",
+    "stream",
+] }
+
+# ── Caching ──────────────────────────────────────────────────────
+moka = { version = "0.12", optional = true, features = ["future"] }
+
+# ── Config Loading ───────────────────────────────────────────────
+envy = { version = "0.4", optional = true }
+
 # ── Concurrency ───────────────────────────────────────────────────
 dashmap = "6"        # Lock-free concurrent hashmap
-parking_lot = "0.12" # Faster mutex than std::sync::Mutex
-arc-swap = "1"       # Lock-free atomic pointer swap for hot config reload
 
 # ── CLI & Config ──────────────────────────────────────────────────
-clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 thiserror = "2"
 
 # ── Networking ────────────────────────────────────────────────────
-hickory-resolver = "0.24"  # DNS resolver (formerly trust-dns)
-url = "2"
+url = { version = "2", optional = true }
 
 # ── Utilities ─────────────────────────────────────────────────────
 uuid = { version = "1", features = ["v4"] }
-once_cell = "1"
+regex = { version = "1", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

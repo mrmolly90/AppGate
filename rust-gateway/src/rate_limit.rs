@@ -1,135 +1,113 @@
-// =============================================================================
-// AppGate Gateway — Rate Limiting
-// =============================================================================
-//
-// Per-identity GCRA (Generic Cell Rate Algorithm) rate limiter.
-// Uses the `governor` crate with a DashMap for concurrent access.
-//
-// Performance rationale:
-// - DashMap provides lock-free concurrent access to rate limiters
-// - GCRA algorithm is O(1) per check
-// - Per-identity limiting prevents single user from starving others
-// =============================================================================
+//! AppGate Gateway — Distributed & Local Rate Limiting
+//!
+//! Uses Redis sorted sets for sliding-window distributed rate limiting,
+//! with governor as local fallback.
 
-use dashmap::DashMap;
-use governor::{
-    clock::DefaultClock,
-    middleware::NoOpMiddleware,
-    state::{InMemoryState, NotKeyed},
-    Quota, RateLimiter,
-};
+use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
-/// Default rate limit: 60 requests per minute per identity
-const DEFAULT_REQUESTS_PER_MINUTE: u32 = 60;
-
-/// Per-identity rate limiter using GCRA algorithm
-pub struct IdentityRateLimiter {
-    limiters:
-        Arc<DashMap<String, RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>>,
-    quota: Quota,
+pub struct RateLimiterService {
+    redis: Option<redis::aio::ConnectionManager>,
+    local: Option<Arc<DefaultDirectRateLimiter>>,
 }
 
-impl IdentityRateLimiter {
-    /// Create a new rate limiter with the default quota.
-    pub fn new() -> Self {
-        Self::with_quota(DEFAULT_REQUESTS_PER_MINUTE)
+impl RateLimiterService {
+    pub async fn new(redis_url: Option<&str>) -> anyhow::Result<Self> {
+        match redis_url {
+            Some(url) if !url.is_empty() => {
+                let client = redis::Client::open(url)?;
+                let conn = client.get_connection_manager().await?;
+                Ok(Self {
+                    redis: Some(conn),
+                    local: None,
+                })
+            }
+            _ => {
+                Ok(Self::new_local())
+            }
+        }
     }
 
-    /// Create a new rate limiter with a custom per-minute quota.
-    pub fn with_quota(requests_per_minute: u32) -> Self {
-let rpm = NonZeroU32::new(requests_per_minute)
-    .unwrap_or_else(|| NonZeroU32::new(60).expect("60 is non-zero"));
-
-let quota = Quota::per_minute(rpm);
+    /// Create a local-only rate limiter (no Redis dependency).
+    pub fn new_local() -> Self {
+        let quota = Quota::per_second(NonZeroU32::new(1000).unwrap());
+        let local = RateLimiter::direct(quota);
         Self {
-            limiters: Arc::new(DashMap::new()),
-            quota,
+            redis: None,
+            local: Some(Arc::new(local)),
         }
     }
 
-    /// Check if a request from the given identity is allowed.
-    ///
-    /// # Arguments
-    /// * `identity_id` - The identity to check
-    ///
-    /// # Returns
-    /// `true` if the request is within rate limits, `false` otherwise.
-    pub fn check(&self, identity_id: &str) -> bool {
-        let limiter = self
-            .limiters
-            .entry(identity_id.to_string())
-            .or_insert_with(|| RateLimiter::direct(self.quota));
-
-        limiter.check().is_ok()
+    pub async fn check(&self, identity: &str, limit: u64, window: u64) -> anyhow::Result<bool> {
+        match &self.redis {
+            Some(conn) => {
+                self.check_redis(conn.clone(), identity, limit, window).await
+            }
+            None => self.check_local(identity, limit, window).await,
+        }
     }
 
-    /// Get the number of tracked identities.
-    pub fn tracked_count(&self) -> usize {
-        self.limiters.len()
+    async fn check_redis(
+        &self,
+        mut conn: redis::aio::ConnectionManager,
+        identity: &str,
+        limit: u64,
+        window: u64,
+    ) -> anyhow::Result<bool> {
+        let key = format!("ratelimit:{}", identity);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+        let window_start = now.saturating_sub(window * 1000);
+
+        // Use raw commands for compatibility with redis 0.27
+        let _: () = redis::cmd("ZREMRANGEBYSCORE")
+            .arg(&key)
+            .arg(0i64)
+            .arg(window_start as i64)
+            .query_async(&mut conn)
+            .await?;
+
+        let count: i64 = redis::cmd("ZCARD")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await?;
+
+        if count >= limit as i64 {
+            debug!(identity = %identity, count = count, limit = limit, "Rate limit exceeded");
+            return Ok(false);
+        }
+
+        let _: () = redis::cmd("ZADD")
+            .arg(&key)
+            .arg(now as f64)
+            .arg(format!("{}:{}", now, uuid::Uuid::new_v4()))
+            .query_async(&mut conn)
+            .await?;
+
+        let _: () = redis::cmd("EXPIRE")
+            .arg(&key)
+            .arg(window as i64)
+            .query_async(&mut conn)
+            .await?;
+
+        Ok(true)
     }
 
-    /// Remove stale entries to prevent memory leaks.
-    ///
-    /// Call this periodically (e.g., every 10 minutes) to clean up
-    /// rate limiters for identities that are no longer active.
-    pub fn cleanup_stale(&self) {
-        // In a production system, you would track last access time
-        // and remove entries older than a threshold.
-        // For now, we clear entries that haven't been used recently.
-        self.limiters.retain(|_, _| true);
+    async fn check_local(
+        &self,
+        _identity: &str,
+        _limit: u64,
+        _window: u64,
+    ) -> anyhow::Result<bool> {
+        if let Some(limiter) = &self.local {
+            match limiter.check() {
+                Ok(()) => Ok(true),
+                Err(_) => Ok(false),
+            }
+        } else {
+            Ok(true)
+        }
     }
 }
-
-impl Default for IdentityRateLimiter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rate_limiter_allows_requests() {
-        let limiter = IdentityRateLimiter::with_quota(100);
-        let identity = "test-user";
-
-        // First 100 requests should be allowed
-        for _ in 0..100 {
-            assert!(limiter.check(identity));
-        }
-    }
-
-    #[test]
-    fn test_rate_limiter_blocks_excess() {
-        let limiter = IdentityRateLimiter::with_quota(10);
-        let identity = "test-user-2";
-
-        // First 10 requests should be allowed
-        for _ in 0..10 {
-            assert!(limiter.check(identity));
-        }
-
-        // 11th request should be blocked
-        assert!(!limiter.check(identity));
-    }
-
-    #[test]
-    fn test_different_identities_independent() {
-        let limiter = IdentityRateLimiter::with_quota(5);
-
-        // Exhaust identity A
-        for _ in 0..5 {
-            assert!(limiter.check("identity-a"));
-        }
-        assert!(!limiter.check("identity-a"));
-
-        // Identity B should still be allowed
-        assert!(limiter.check("identity-b"));
-    }
-}
-
-

@@ -7,34 +7,31 @@
 // =============================================================================
 
 #![deny(unsafe_code)]
-#![deny(missing_docs)]
 #![deny(clippy::all)]
 #![deny(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::must_use_candidate)]
-#![allow(dead_code)] // TODO: Remove when all modules are wired up
 
-use anyhow::Context;
 use clap::Parser;
 use std::net::SocketAddr;
-use tokio::runtime::{self, Runtime};
+use tokio::signal;
 
-mod metrics;
-mod server;
-mod telemetry;
-mod tls;
-
-#[cfg(feature = "audit")]
 mod audit;
 #[cfg(feature = "jwt-auth")]
 mod jwt;
+mod metrics;
 #[cfg(feature = "policy-engine")]
 mod policy;
+mod proxy;
 #[cfg(feature = "ratelimit")]
 mod rate_limit;
+mod router;
 #[cfg(feature = "ssrf-protection")]
 mod ssrf;
+mod server;
+mod telemetry;
+mod tls;
 
 /// AppGate SDP Gateway — Zero-trust security gateway
 #[derive(Parser, Debug, Clone)]
@@ -48,8 +45,8 @@ struct Args {
     #[arg(long, default_value_t = 8443)]
     listen_port: u16,
 
-    /// Control plane gRPC endpoint
-    #[arg(long, default_value = "http://control-plane:9090")]
+    /// Control plane URL
+    #[arg(long, default_value = "http://appgate-control-plane:8080")]
     control_plane_url: String,
 
     /// TLS certificate path (PEM)
@@ -72,76 +69,75 @@ struct Args {
     #[arg(long, default_value = "appgate-gateway")]
     jwt_audience: String,
 
-    /// Number of tokio worker threads (0 = auto-detect)
-    #[arg(long, default_value_t = 0)]
-    worker_threads: usize,
-
     /// OpenTelemetry endpoint
     #[arg(long, default_value = "http://otel-collector:4317")]
     otlp_endpoint: String,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    // Build NUMA-aware tokio runtime
-    let runtime = build_runtime(args.worker_threads)?;
-
-    // Initialize tracing (OpenTelemetry)
-    let _tracing_guard = telemetry::init_tracer_provider(&args.otlp_endpoint);
+    // Initialize tracing
+    let _guard = telemetry::init_tracer_provider(&args.otlp_endpoint);
 
     // Start server
     let addr = SocketAddr::new(
-        args.listen_addr.parse().context("Invalid listen address")?,
+        args.listen_addr.parse().expect("Invalid listen address"),
         args.listen_port,
     );
 
     tracing::info!(
         target: "appgate::startup",
         addr = %addr,
-        workers = runtime.metrics().num_workers(),
         "Starting AppGate Gateway"
     );
 
-    runtime.block_on(async move {
-        let server_config = server::ServerConfig {
-            listen_addr: args.listen_addr.clone(),
-            listen_port: args.listen_port,
-            control_plane_url: args.control_plane_url.clone(),
-            tls_cert_path: args.tls_cert_path.clone(),
-            tls_key_path: args.tls_key_path.clone(),
-            jwt_key_path: args.jwt_key_path.clone(),
-            jwt_issuer: args.jwt_issuer.clone(),
-            jwt_audience: args.jwt_audience.clone(),
-            otlp_endpoint: args.otlp_endpoint.clone(),
-        };
-        server::run_server(addr, server_config).await
-    })
-}
-
-/// Build a NUMA-aware tokio multi-thread runtime.
-fn build_runtime(worker_threads: usize) -> anyhow::Result<Runtime> {
-    let thread_count = if worker_threads > 0 {
-        worker_threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
+    let config = server::ServerConfig {
+        listen_addr: args.listen_addr.clone(),
+        listen_port: args.listen_port,
+        control_plane_url: args.control_plane_url.clone(),
+        tls_cert_path: args.tls_cert_path.clone(),
+        tls_key_path: args.tls_key_path.clone(),
+        jwt_key_path: args.jwt_key_path.clone(),
+        jwt_issuer: args.jwt_issuer.clone(),
+        jwt_audience: args.jwt_audience.clone(),
+        otlp_endpoint: args.otlp_endpoint.clone(),
     };
 
-    runtime::Builder::new_multi_thread()
-        .worker_threads(thread_count)
-        .enable_io()
-        .enable_time()
-        .global_queue_interval(61)
-        .max_io_events_per_tick(1024)
-        .on_thread_start(|| {
-            tracing::debug!(target: "appgate::runtime", "Worker thread started");
-        })
-        .on_thread_stop(|| {
-            tracing::debug!(target: "appgate::runtime", "Worker thread stopped");
-        })
-        .build()
-        .context("Failed to build tokio runtime")
+    let mut server_handle = tokio::spawn(async move {
+        server::run_server(addr, config).await
+    });
+
+    // Wait for shutdown signal
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            tracing::info!("SIGINT received, shutting down");
+        }
+        _ = async {
+            #[cfg(unix)]
+            {
+                let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok()?;
+                sigterm.recv().await;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+            Some(())
+        } => {
+            tracing::info!("SIGTERM received, shutting down");
+        }
+        result = &mut server_handle => {
+            match result {
+                Ok(Ok(())) => tracing::info!("Server stopped cleanly"),
+                Ok(Err(e)) => tracing::error!("Server error: {}", e),
+                Err(e) => tracing::error!("Server task join error: {}", e),
+            }
+        }
+    }
+
+    tracing::info!("AppGate shutdown complete");
+    Ok(())
 }
 

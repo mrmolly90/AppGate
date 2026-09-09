@@ -47,7 +47,7 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - containerPort: {{ .Values.gateway.service.targetPort | default 8443 }}
+            - containerPort: {{ .Values.gateway.service.targetPort | default 8080 }}
               name: https
               protocol: TCP
             - containerPort: {{ .Values.gateway.service.metricsPort | default 9090 }}

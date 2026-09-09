@@ -1,9 +1,9 @@
-﻿// =============================================================================
+// =============================================================================
 // AppGate Gateway - HTTP Server
 // =============================================================================
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -13,21 +13,30 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{error, info, instrument, warn};
+use tracing::{info, instrument, warn};
+
+use crate::proxy::ProxyClient;
+use crate::router;
 
 pub(crate) static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 /// Server configuration passed from main
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
+    #[allow(dead_code)]
     pub listen_addr: String,
+    #[allow(dead_code)]
     pub listen_port: u16,
     pub control_plane_url: String,
     pub tls_cert_path: String,
     pub tls_key_path: String,
+    #[allow(dead_code)]
     pub jwt_key_path: String,
+    #[allow(dead_code)]
     pub jwt_issuer: String,
+    #[allow(dead_code)]
     pub jwt_audience: String,
+    #[allow(dead_code)]
     pub otlp_endpoint: String,
 }
 
@@ -38,6 +47,9 @@ pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Resul
         .map_err(|e| anyhow::anyhow!("Failed to bind to {addr}: {e}"))?;
 
     info!(target: "appgate::server", addr = %addr, "Gateway server listening");
+
+    let proxy_client = Arc::new(ProxyClient::new());
+    let upstream_base = config.control_plane_url.clone();
 
     let tls_acceptor = crate::tls::load_tls_config(&config.tls_cert_path, &config.tls_key_path)
         .await
@@ -56,6 +68,8 @@ pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Resul
 
         ACTIVE_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
         let tls_acceptor = tls_acceptor.clone();
+        let proxy = proxy_client.clone();
+        let upstream = upstream_base.clone();
 
         tokio::spawn(async move {
             let tls_stream = match tls_acceptor.accept(stream).await {
@@ -71,7 +85,11 @@ pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Resul
             let conn = http1::Builder::new()
                 .keep_alive(true)
                 .header_read_timeout(std::time::Duration::from_secs(10))
-                .serve_connection(io, service_fn(|req| handle_request(req, peer_addr)));
+                .serve_connection(io, service_fn(move |req| {
+                    let proxy = proxy.clone();
+                    let upstream = upstream.clone();
+                    async move { handle_request(req, peer_addr, &proxy, &upstream).await }
+                }));
 
             let conn = conn.with_upgrades();
             if let Err(e) = conn.await {
@@ -84,10 +102,12 @@ pub async fn run_server(addr: SocketAddr, config: ServerConfig) -> anyhow::Resul
     }
 }
 
-#[instrument(skip(req), fields(peer = %peer_addr, method = %req.method(), path = %req.uri().path()))]
+#[instrument(skip(req, proxy), fields(peer = %peer_addr, method = %req.method(), path = %req.uri().path()))]
 async fn handle_request(
     req: Request<Incoming>,
     peer_addr: SocketAddr,
+    proxy: &ProxyClient,
+    upstream_base: &str,
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
     if req.method() == Method::GET && req.uri().path() == "/healthz" {
         return Ok(Response::builder()
@@ -114,41 +134,6 @@ async fn handle_request(
             .unwrap());
     }
 
-    if req.method() == Method::POST && req.uri().path() == "/v1/proxy" {
-        return handle_proxy(req, peer_addr).await;
-    }
-
-    Ok(Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(
-            r#"{"error":"not_found","message":"The requested resource was not found"}"#,
-        )))
-        .unwrap())
-}
-
-#[instrument(skip(req, _peer_addr))]
-async fn handle_proxy(
-    req: Request<Incoming>,
-    _peer_addr: SocketAddr,
-) -> Result<Response<Full<Bytes>>, hyper::Error> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            error!(target: "appgate::proxy", error = %e, "Failed to read request body");
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("content-type", "application/json")
-                .body(Full::new(Bytes::from(
-                    r#"{"error":"bad_request","message":"Failed to read request body"}"#,
-                )))
-                .unwrap());
-        }
-    };
-
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(Full::new(body))
-        .unwrap())
+    // Proxy all requests to the upstream control plane / service
+    router::route_request(req, peer_addr, proxy, upstream_base).await
 }

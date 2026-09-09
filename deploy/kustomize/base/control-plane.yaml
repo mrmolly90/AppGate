@@ -33,11 +33,15 @@ spec:
           image: appgate/control-plane:latest
           imagePullPolicy: Always
           ports:
-            - containerPort: 8443
+            - containerPort: 8080
+              protocol: TCP
+            - containerPort: 9090
               protocol: TCP
           env:
-            - name: PORT
-              value: "8443"
+            - name: APPGATE_HTTP_PORT
+              value: "8080"
+            - name: APPGATE_GRPC_PORT
+              value: "9090"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

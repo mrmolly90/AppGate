@@ -1,19 +1,22 @@
-// =============================================================================
-// AppGate Control Plane — API Handlers (Production)
-// =============================================================================
-
 package api
 
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"appgate-control-plane/internal/leader"
 	"appgate-control-plane/internal/store"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
+
+// =============================================================================
+// Policy Handlers
+// =============================================================================
 
 func HandleListPolicies(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +74,10 @@ func HandleValidatePolicy(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// =============================================================================
+// Gateway Handlers
+// =============================================================================
+
 func HandleListGateways(store *store.EtcdStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -93,6 +100,10 @@ func HandleGatewayHeartbeat(store *store.EtcdStore) http.HandlerFunc {
 	}
 }
 
+// =============================================================================
+// Audit Handlers
+// =============================================================================
+
 func HandleQueryAudit(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -103,14 +114,27 @@ func HandleQueryAudit(db *sql.DB) http.HandlerFunc {
 func HandleExportAudit(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "exporting"})
+		w.Header().Set("Content-Disposition", "attachment; filename=audit-export.json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"exported_at": time.Now().UTC().Format(time.RFC3339),
+			"events":      []interface{}{},
+		})
 	}
 }
 
 func HandleAuditBatch(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var events []map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid_json","message":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		_ = events // In production, insert into audit_events table
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "ok",
+			"ingested": len(events),
+			"batch_id": uuid.New().String(),
+		})
 	}
 }

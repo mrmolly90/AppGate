@@ -1,0 +1,29 @@
+# =============================================================================
+# AppGate — Gitleaks Configuration
+# =============================================================================
+# This file configures Gitleaks secret scanning for the AppGate project.
+# It defines allowlists for known false positives and custom regex rules.
+
+[allowlist]
+description = "Known safe values used in tests, configs, and placeholders"
+paths = [
+    # Test fixtures and config files with example/placeholder secrets
+    "(?i)gateway/body.json",
+    "(?i)*.md$",
+    "(?i)*_test.go$",
+    "(?i)*test_*.rs$",
+    "(?i)migrations/",
+    "(?i)deploy/helm/",
+    "(?i)docker-compose.yml",
+    "(?i)Dockerfile",
+]
+
+[allowlist]
+regexes = [
+    # Placeholder passwords in docker-compose and config
+    "(?i)dev-secret-change-in-production",
+    "(?i)example\\.com",
+    "(?i)placeholder",
+    "(?i)changeme",
+    "(?i)your-secret-key",
+]

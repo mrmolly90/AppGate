@@ -1,13 +1,17 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 # =============================================================================
-# AppGate Gateway — Production Build
+# AppGate Rust Gateway — Production Build (appgate-gateway v0.2.0)
 # =============================================================================
 
 # ── Builder stage ────────────────────────────────────────────────────────────
 FROM rust:1.80-alpine AS builder
 RUN apk add --no-cache musl-dev gcc cmake make protoc protobuf-dev
 WORKDIR /app
-COPY . .
+COPY rust-gateway/Cargo.toml rust-gateway/Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release --locked 2>/dev/null || true
+COPY rust-gateway/ ./
+RUN touch src/main.rs
 RUN cargo build --release --locked
 
 # ── Runtime stage ────────────────────────────────────────────────────────────

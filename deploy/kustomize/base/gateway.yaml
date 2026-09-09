@@ -35,7 +35,7 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - name: https
-              containerPort: 8443
+              containerPort: 8080
               protocol: TCP
             - name: metrics
               containerPort: 9090
@@ -49,15 +49,11 @@ spec:
               value: "http://otel-collector.appgate-observability:4317"
           args:
             - --listen-addr=0.0.0.0
-            - --listen-port=8443
+            - --listen-port=8080
             - --control-plane-url=http://appgate-control-plane.appgate-system:8080
             - --tls-cert-path=/etc/appgate/tls/cert.pem
             - --tls-key-path=/etc/appgate/tls/key.pem
             - --jwt-key-path=/etc/appgate/jwt/verify.pem
-            - --worker-threads=0
-            - --max-body-size=10485760
-            - --upstream-timeout-secs=300
-            - --max-concurrent-requests=10000
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -92,6 +92,7 @@ func main() {
 		} else if elector == nil {
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintln(w, "ready_standalone")
+		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprintln(w, "not_ready")
 		}
@@ -120,6 +121,10 @@ func main() {
 	apiV1.HandleFunc("/audit/events", api.HandleQueryAudit(db)).Methods("GET")
 	apiV1.HandleFunc("/audit/events/export", api.HandleExportAudit(db)).Methods("POST")
 	apiV1.HandleFunc("/audit/batch", api.HandleAuditBatch(db)).Methods("POST")
+
+	// Dev-Portal integration routes (on main router, bypass auth middleware)
+	router.HandleFunc("/api/v1/gateways/register", api.HandleDevPortalRegister()).Methods("POST")
+	router.HandleFunc("/api/v1/secrets/{clientID}", api.HandleDevPortalSecretStatus()).Methods("GET")
 
 	router.HandleFunc("/.well-known/jwks.json", authService.HandleJWKS).Methods("GET")
 

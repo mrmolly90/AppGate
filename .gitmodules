@@ -1,0 +1,3 @@
+[submodule "dev-portal"]
+	path = dev-portal
+	url = https://github.com/mrmolly90/AppGate-Dev-Portal.git

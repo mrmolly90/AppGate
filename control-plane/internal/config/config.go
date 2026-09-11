@@ -35,7 +35,6 @@ func Load() (*Config, error) {
 
 	v.SetDefault("http_port", 8080)
 	v.SetDefault("grpc_port", 9090)
-	v.SetDefault("grpc_port", 9090)
 	v.SetDefault("etcd_endpoints", []string{"localhost:2379"})
 	v.SetDefault("etcd_dial_timeout", 5*time.Second)
 	v.SetDefault("leader_election_key", "/appgate/leader")

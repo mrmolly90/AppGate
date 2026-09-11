@@ -215,7 +215,7 @@ services:
 
   #  etcd (distributed store for leader election)
   etcd:
-    image: bitnami/etcd:3.5.15
+    image: quay.io/bitnami/etcd:3.5
     container_name: appgate-etcd
     restart: unless-stopped
     environment:

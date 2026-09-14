@@ -19,8 +19,8 @@ jobs:
       helm: ${{ steps.filter.outputs.helm }}
       security: ${{ steps.filter.outputs.security }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -54,7 +54,7 @@ jobs:
       matrix:
         workspace: [gateway, rust-gateway]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -80,8 +80,8 @@ jobs:
     if: ${{ needs.changes.outputs.go == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22'
       - name: Go mod tidy
@@ -93,7 +93,7 @@ jobs:
       - name: Vet
         run: cd control-plane && go vet ./...
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           args: --timeout=5m --skip-dirs=internal/auth/firebase.go
@@ -106,8 +106,8 @@ jobs:
     if: ${{ needs.changes.outputs.terraform == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
       - name: Terraform fmt
         run: cd infra/terraform && terraform fmt -check -recursive || true
       - name: Terraform validate
@@ -120,8 +120,8 @@ jobs:
     if: ${{ needs.changes.outputs.helm == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
       - name: Helm lint
         run: helm lint deploy/helm/appgate || true
       - name: Helm template
@@ -134,7 +134,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Trivy scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -144,4 +144,4 @@ jobs:
           exit-code: '0'
       - name: Dependency Review
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5

@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 # =============================================================================
 # AppGate Gateway — Production Build
 # =============================================================================
@@ -11,7 +11,7 @@ COPY . .
 RUN cargo build --release --locked
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tini curl && \
     addgroup -g 1000 appgate && \
     adduser -u 1000 -G appgate -s /sbin/nologin -D appgate

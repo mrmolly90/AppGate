@@ -1,10 +1,10 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 # =============================================================================
 # AppGate Gateway — Production Build
 # =============================================================================
 
 # ── Builder stage ────────────────────────────────────────────────────────────
-FROM rust:1.80-alpine AS builder
+FROM rust:1.99-alpine AS builder
 RUN apk add --no-cache musl-dev gcc cmake make protoc protobuf-dev
 WORKDIR /app
 COPY . .
